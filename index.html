@@ -358,11 +358,11 @@
   </div>
 </div>
 
-<script src="metrics.js?v=3"></script>
+<script src="metrics.js?v=4"></script>
 <script type="module">
-  import { OrderStore, SyncState } from './idb-sync.js?v=3';
-  import { MisoClient } from './miso-api.js?v=3';
-  import { buildSheet, sortOrders } from './miso-sheets.js?v=3';
+  import { OrderStore, SyncState } from './idb-sync.js?v=4';
+  import { MisoClient } from './miso-api.js?v=4';
+  import { buildSheet, sortOrders } from './miso-sheets.js?v=4';
   window.misoMetrics = globalThis.MisoMetrics;
   window.misoSyncState = SyncState;
   window.misoSheets = { buildSheet, sortOrders };
@@ -936,6 +936,6 @@
   window.addEventListener('idb-ready', startApp);
   if (window.getMisoClient) startApp();
 </script>
-<script src="/pwa-register.js?v=3"></script>
+<script src="/pwa-register.js?v=4"></script>
 </body>
 </html>

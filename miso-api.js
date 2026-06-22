@@ -3,25 +3,16 @@
 const LOGIN_URL = 'https://rfq.getmiso.com/backoffice/login';
 const REQUESTS_URL = 'https://rfq.getmiso.com/backoffice/requests';
 
-const PAYMENT_PROXY = 'https://miso-contract-api.onrender.com/api/payment-transactions';
-
-/** 결제 API CORS 우회 — Render 프록시 (로컬은 npm start 동일 경로) */
-function paymentsUrl(qs) {
-  if (typeof location !== 'undefined' && /^(localhost|127\.0\.0\.1)$/.test(location.hostname)) {
-    return location.origin + '/api/payment-transactions?' + qs;
-  }
-  return PAYMENT_PROXY + '?' + qs;
-}
-
 const PAGE_LIMIT = 50;
-const CONCURRENCY = 10;
+// 한 번에 병렬로 가져올 페이지 수. 배치를 받은 뒤 페이지 순서대로 윈도우 경계를 확인한다.
+const PAGE_BATCH = 10;
 const RETRY_429_BASE_MS = 2000;
 const RETRY_429_MAX = 6;
 const LOOKBACK_DAYS = 45;
 const PAYMENT_LAG_DAYS = 21;
+// 계약(결제)으로 인정하는 주문 상태. 이 상태의 charged_at 을 계약 일시로 사용한다.
 const PAID_STATUSES = ['confirming', 'complete'];
 const EXCLUDED_STATUSES = ['unqualified'];
-const ORDER_CACHE_TTL_MS = 10 * 60 * 1000;
 
 function metrics() {
   return globalThis.MisoMetrics;
@@ -71,20 +62,6 @@ async function login(username, password) {
   return body.access_token;
 }
 
-async function mapWithConcurrency(items, limit, worker) {
-  const results = new Array(items.length);
-  let idx = 0;
-  const runners = new Array(Math.min(limit, items.length)).fill(0).map(async () => {
-    while (true) {
-      const current = idx++;
-      if (current >= items.length) break;
-      results[current] = await worker(items[current], current);
-    }
-  });
-  await Promise.all(runners);
-  return results;
-}
-
 function regionText(req) {
   const r = req.region || req.regions;
   if (!r) return '';
@@ -98,44 +75,14 @@ export class MisoClient {
     this.password = password;
     this.serviceId = Number(serviceId) || 586;
     this.token = null;
-    this.paymentCache = new Map();
     this.lastQualified = null;
     this.lastLoadMeta = null;
   }
 
-  clearPaymentCache() {
-    this.paymentCache.clear();
-  }
-
-  cacheKey(requestId) {
-    return this.serviceId + ':' + requestId;
-  }
-
-  getCachedPayment(requestId) {
-    const entry = this.paymentCache.get(this.cacheKey(requestId));
-    if (!entry) return undefined;
-    if (Date.now() - entry.fetchedAt > ORDER_CACHE_TTL_MS) {
-      this.paymentCache.delete(this.cacheKey(requestId));
-      return undefined;
-    }
-    return entry.paymentAt;
-  }
-
-  setCachedPayment(requestId, paymentAt) {
-    this.paymentCache.set(this.cacheKey(requestId), { paymentAt, fetchedAt: Date.now() });
-  }
-
-  seedPaymentCacheFromOrders(orders) {
-    const now = Date.now();
-    for (const o of orders) {
-      if (o.paymentFetched || o.paymentAt !== undefined) {
-        this.paymentCache.set(this.cacheKey(o.id), {
-          paymentAt: o.paymentAt || null,
-          fetchedAt: o.updatedAt || now,
-        });
-      }
-    }
-  }
+  // 계약 일시는 주문 목록의 charged_at 을 직접 사용하므로 별도 결제 캐시가 없다.
+  // index.html 의 기존 호출부 호환을 위해 메서드는 no-op 으로 남겨둔다.
+  clearPaymentCache() {}
+  seedPaymentCacheFromOrders() {}
 
   async getToken(forceNew) {
     if (!forceNew && this.token) return this.token;
@@ -147,62 +94,41 @@ export class MisoClient {
     return metrics().resolveOpts(opts, { lookbackDays: LOOKBACK_DAYS, paymentLagDays: PAYMENT_LAG_DAYS });
   }
 
-  shouldFetchPayment(req, ctx) {
-    if (!PAID_STATUSES.includes(req.status)) return false;
-    const createdYmd = metrics().toSeoulDate(req.created_at);
-    if (!createdYmd || createdYmd < ctx.fetchStart) return false;
-    if (createdYmd > ctx.paymentEnd) return false;
-    return true;
-  }
-
+  // service_ids=N 주문을 created_at 내림차순으로 PAGE_BATCH(기본 10) 페이지씩 병렬 조회한다.
+  // 각 배치를 받은 뒤 페이지 순서대로 경계를 확인해 fetchStart 이전 접수가 나오면 중단.
+  // (서버 rate limit 은 고려하지 않음 — 경계 너머로 몇 페이지 더 받아도 그냥 버린다.)
   async fetchRequestsInWindow(token, fetchStart) {
-    const collected = [];
-    for (let page = 0; page < 120; page++) {
+    const fetchPage = (page) => {
       const qs = new URLSearchParams();
       qs.set('page', String(page));
       qs.set('limit', String(PAGE_LIMIT));
       qs.append('service_ids', String(this.serviceId));
-      const data = await apiGet(REQUESTS_URL + '?' + qs.toString(), token);
-      const rows = (data && (data.requests || data.data || data.rows)) || [];
-      if (!rows.length) break;
-      let pastWindow = false;
-      for (const r of rows) {
-        const cd = metrics().toSeoulDate(r.created_at);
-        if (!cd || cd < fetchStart) { pastWindow = true; break; }
-        collected.push(r);
+      return apiGet(REQUESTS_URL + '?' + qs.toString(), token).then(
+        (data) => (data && (data.requests || data.data || data.rows)) || [],
+        // 데이터 범위를 넘어선 페이지의 오류는 "더 없음"으로 취급. 401(만료)만 전파.
+        (err) => { if (err && err.status === 401) throw err; return []; }
+      );
+    };
+
+    const collected = [];
+    let startPage = 0;
+    let done = false;
+    while (!done && startPage < 4000) {
+      const pages = Array.from({ length: PAGE_BATCH }, (_, i) => startPage + i);
+      const batch = await Promise.all(pages.map(fetchPage));
+      for (const rows of batch) {
+        if (!rows.length) { done = true; break; }
+        let pastWindow = false;
+        for (const r of rows) {
+          const cd = metrics().toSeoulDate(r.created_at);
+          if (!cd || cd < fetchStart) { pastWindow = true; break; }
+          collected.push(r);
+        }
+        if (pastWindow || rows.length < PAGE_LIMIT) { done = true; break; }
       }
-      if (pastWindow || rows.length < PAGE_LIMIT) break;
+      startPage += PAGE_BATCH;
     }
     return collected;
-  }
-
-  async fetchPaymentAt(token, requestId) {
-    const cached = this.getCachedPayment(requestId);
-    if (cached !== undefined) return cached;
-
-    const qs = new URLSearchParams();
-    qs.set('contextType', 'request');
-    qs.set('contextId', String(requestId));
-    qs.set('sorts', '+timestamp');
-    qs.set('rowsPerPage', '50');
-    let paymentAt = null;
-    try {
-      const data = await apiGet(paymentsUrl(qs.toString()), token);
-      const rows = (data && (data.rows || data.data || (Array.isArray(data) ? data : []))) || [];
-      let latest = null;
-      for (const r of rows) {
-        if (r && r.paymentType === 'payment' && r.success && r.timestamp) {
-          const t = new Date(r.timestamp).getTime();
-          if (latest === null || t > latest.t) latest = { t, raw: r.timestamp };
-        }
-      }
-      paymentAt = latest ? latest.raw : null;
-    } catch (e) {
-      if (e.status === 401) throw e;
-      return null;
-    }
-    this.setCachedPayment(requestId, paymentAt);
-    return paymentAt;
   }
 
   async loadQualifiedData(opts) {
@@ -210,15 +136,11 @@ export class MisoClient {
     let token = await this.getToken(false);
     const run = async (tok) => {
       const rows = await this.fetchRequestsInWindow(tok, ctx.fetchStart);
-      const enriched = await mapWithConcurrency(rows, CONCURRENCY, async (req) => {
+      const enriched = rows.map((req) => {
         const createdYmd = metrics().toSeoulDate(req.created_at);
-        let paymentAt = null;
-        if (this.shouldFetchPayment(req, ctx)) {
-          paymentAt = await this.fetchPaymentAt(tok, req.id);
-        } else if (PAID_STATUSES.includes(req.status)) {
-          const c = this.getCachedPayment(req.id);
-          if (c !== undefined) paymentAt = c;
-        }
+        // 계약 일시 = 주문 목록의 charged_at(결제 시각). PAID 상태에서만 계약으로 인정.
+        // (별도 payment-transactions API 호출 불필요)
+        const paymentAt = PAID_STATUSES.includes(req.status) ? (req.charged_at || null) : null;
         return {
           id: req.id,
           status: req.status,
@@ -227,7 +149,7 @@ export class MisoClient {
           due_date: req.due_date || null,
           created_at: req.created_at || null,
           createdYmd,
-          paymentAt: paymentAt || null,
+          paymentAt,
           paymentYmd: metrics().toSeoulDate(paymentAt),
         };
       });
@@ -244,7 +166,6 @@ export class MisoClient {
       return await run(token);
     } catch (e) {
       if (e.status === 401) {
-        this.clearPaymentCache();
         this.token = null;
         token = await this.getToken(true);
         return await run(token);

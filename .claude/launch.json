@@ -1,0 +1,12 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "miso-dashboard",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["start"],
+      "port": 4000,
+      "autoPort": true
+    }
+  ]
+}

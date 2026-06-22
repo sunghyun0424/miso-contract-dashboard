@@ -30,19 +30,26 @@
 
 ```
 [브라우저 · Firebase Hosting의 index.html (SPA)]
-   ├─ 로그인 / 주문 목록 → rfq.getmiso.com           (직접 호출, CORS 허용)
-   ├─ 결제 내역         → Render 프록시 → api.getmiso.com  (CORS 우회용 프록시)
-   ├─ 지표 계산          → metrics.js · miso-sheets.js (클라이언트)
-   └─ 저장              → IndexedDB (브라우저 로컬 캐시, 10분 TTL)
+   ├─ 로그인 / 주문 목록 → rfq.getmiso.com   (직접 호출, CORS 허용)
+   │        └─ 계약 일시 = 주문의 charged_at(결제 시각) — 별도 결제 API 호출 없음
+   ├─ 지표 계산 → metrics.js · miso-sheets.js (클라이언트)
+   └─ 저장     → IndexedDB (브라우저 로컬 캐시)
 ```
 
-- `api.getmiso.com`(결제)만 CORS가 막혀 있어 **Render의 결제 전용 프록시**(`proxy-server.js`)를 경유합니다.
-  로그인·주문목록(`rfq.getmiso.com`)은 브라우저가 직접 호출합니다.
-- 미소 API에는 날짜 필터가 없어, **최근 N일(기본 45일) 접수 주문**을 최신순으로 스캔합니다.
-  (`miso-api.js`의 `LOOKBACK_DAYS`. 접수→결제 지연을 감안한 여유 기간)
-- 결제가 존재할 수 있는 상태(`confirming`, `complete`)만 결제 내역을 조회해 부하를 줄입니다.
-- 조회한 주문·결제는 **IndexedDB**에 저장(10분 TTL)하여 새로고침/탭 재방문 시 즉시 표시하고 재조회 부하를 줄입니다.
+- 로그인·주문목록(`rfq.getmiso.com`)은 브라우저가 **직접** 호출합니다(CORS 허용).
+- **계약(결제) 일시는 주문 목록의 `charged_at` 필드**를 사용합니다. 과거에는 주문마다
+  `payment-transactions`(`api.getmiso.com`)를 따로 조회했지만, `charged_at`이 결제 시각과
+  사실상 동일(±1초)하여 **주문당 결제 호출(N+1)을 제거**했습니다. 날짜·시간 단위 지표에는 영향이 없습니다.
+  계약으로 인정하는 상태(`confirming`, `complete`)에서만 `charged_at`을 계약 일시로 봅니다.
+- 미소 API에는 날짜 필터가 없어, 주문 목록을 최신순으로 스캔합니다. 페이지네이션은
+  **10페이지 단위 병렬 배치**(`miso-api.js`의 `PAGE_BATCH`)로 가져오고, 각 배치를 받은 뒤
+  접수일 경계(`fetchStart`)를 확인해 중단합니다. (스캔 범위: `LOOKBACK_DAYS` 기본 45일)
+- 조회 결과는 **IndexedDB**에 저장하여 새로고침/탭 재방문 시 즉시 표시합니다.
 - **저장은 브라우저별 로컬**입니다. Firestore 같은 서버 DB를 쓰지 않으므로 다른 사람/기기와 데이터가 공유되지 않고, 각자 로그인해 각자 조회·캐싱합니다.
+
+> ⚠️ `charged_at` 사용으로 **결제 CORS 우회용 Render 프록시는 더 이상 필요하지 않습니다**(레거시).
+> `proxy-server.js`/Render 서비스는 남겨둬도 무방하며, 정리하려면 삭제해도 됩니다.
+> (아래 "결제 프록시" 관련 섹션은 레거시 참고용입니다.)
 
 ## 로컬에서 실행 (배포 없이)
 
