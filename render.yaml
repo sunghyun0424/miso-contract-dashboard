@@ -15,3 +15,5 @@ services:
         value: "20"
       - key: API_ONLY
         value: "1"
+      - key: CONCURRENCY
+        value: "20"

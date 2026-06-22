@@ -6,12 +6,16 @@ const path = require('path');
 const base = (process.env.DASHBOARD_API_BASE || 'https://miso-contract-api.onrender.com').replace(/\/$/, '');
 const escaped = base.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
 const outDir = path.join(__dirname, '..', 'public');
-const content = [
-  '// build:hosting 시 DASHBOARD_API_BASE 환경변수로 자동 생성됩니다.',
-  "window.DASHBOARD_API_BASE = '" + escaped + "';",
-  '',
-].join('\n');
+const htmlPath = path.join(outDir, 'index.html');
 
-fs.mkdirSync(outDir, { recursive: true });
-fs.writeFileSync(path.join(outDir, 'config.js'), content);
-console.log('public/config.js → API_BASE =', base || '(same origin / local)');
+if (fs.existsSync(htmlPath)) {
+  let html = fs.readFileSync(htmlPath, 'utf8');
+  html = html.replace(
+    "window.DASHBOARD_API_BASE = '';",
+    "window.DASHBOARD_API_BASE = '" + escaped + "';"
+  );
+  fs.writeFileSync(htmlPath, html);
+  console.log('public/index.html → API_BASE =', base);
+} else {
+  console.warn('public/index.html not found — run cp index.html public/ first');
+}

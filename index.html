@@ -215,8 +215,8 @@
       <div class="field"><label for="interval">자동 새로고침</label>
         <select id="interval"><option value="60">1분</option><option value="300">5분</option><option value="0">수동</option></select>
       </div>
-      <div class="field"><label for="apiBase">API 서버</label>
-        <input id="apiBase" type="url" placeholder="http://localhost:4000" style="width:220px" />
+      <div class="field" id="apiBaseField"><label for="apiBase">API 서버</label>
+        <input id="apiBase" type="url" placeholder="로컬 개발용 (비워두면 Render API)" style="width:220px" />
         <button type="button" class="btn ghost" id="apiLocalBtn" style="margin-left:6px">이 PC</button>
       </div>
       <button class="btn" id="applyBtn">적용</button>
@@ -357,7 +357,7 @@
   </div>
 </div>
 
-<script src="config.js"></script>
+<script>window.DASHBOARD_API_BASE = '';</script>
 <script type="module">
   import { publishDashboard, subscribeDashboard } from './firebase-sync.js';
   window.firebaseSync = { publishDashboard, subscribeDashboard };
@@ -366,10 +366,20 @@
 <script>
   const $ = (id) => document.getElementById(id);
   const userEl = $('userId'), pwEl = $('userPw'), serviceEl = $('serviceId'), intervalEl = $('interval'), apiBaseEl = $('apiBase');
+  function isLocalApiUrl(url) {
+    return /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?\/?$/i.test(url || '');
+  }
+  const onLocalPage = /^(localhost|127\.0\.0\.1)$/i.test(location.hostname);
+  if (!onLocalPage) {
+    const storedApi = localStorage.getItem('miso_api_base') || '';
+    if (isLocalApiUrl(storedApi)) localStorage.removeItem('miso_api_base');
+    $('apiBaseField').style.display = 'none';
+  }
   function getApiBase() {
-    const stored = localStorage.getItem('miso_api_base');
-    if (stored !== null && stored !== '') return stored.replace(/\/$/, '');
-    return (window.DASHBOARD_API_BASE || '').replace(/\/$/, '');
+    const configBase = (window.DASHBOARD_API_BASE || '').replace(/\/$/, '');
+    const stored = (localStorage.getItem('miso_api_base') || '').replace(/\/$/, '');
+    if (stored && !(isLocalApiUrl(stored) && !onLocalPage)) return stored;
+    return configBase;
   }
   function apiUrl(path) { return getApiBase() + path; }
   const dot = $('dot'), statusText = $('statusText'), errBox = $('err');
@@ -379,6 +389,7 @@
   serviceEl.value = localStorage.getItem('miso_service') || '586';
   intervalEl.value = localStorage.getItem('miso_interval') || '60';
   apiBaseEl.value = localStorage.getItem('miso_api_base') ?? (window.DASHBOARD_API_BASE || '');
+  if (!apiBaseEl.value && getApiBase()) apiBaseEl.placeholder = getApiBase();
 
   let timer = null, countdownTimer = null, nextAt = 0, loading = false;
   let lastData = null, timeMode = 'hourly';
@@ -413,7 +424,7 @@
       return JSON.parse(text);
     } catch (_) {
       if (/^\s*</.test(text)) {
-        throw new Error('API 서버 응답이 없습니다. 배포가 완료되었는지 확인하거나 로컬에서는 npm start로 실행하세요.');
+        throw new Error('API 서버 응답이 없습니다. 설정에서 API 서버를 확인하세요.');
       }
       throw new Error('잘못된 API 응답 형식');
     }
@@ -723,6 +734,30 @@
     });
   }
 
+  let loadStartedAt = 0, loadTickTimer = null;
+  function startLoadTimer() {
+    loadStartedAt = Date.now();
+    if (loadTickTimer) clearInterval(loadTickTimer);
+    loadTickTimer = setInterval(() => {
+      if (!loading) return;
+      const sec = Math.round((Date.now() - loadStartedAt) / 1000);
+      const hint = sec < 30 ? '미소 API 조회 중…' : sec < 120 ? '결제 내역 집계 중… (최초 1~3분)' : '아직 처리 중… 잠시만 기다려 주세요';
+      setStatus('loading', '갱신 중… ' + sec + '초 · ' + hint);
+    }, 1000);
+  }
+  function stopLoadTimer() {
+    if (loadTickTimer) { clearInterval(loadTickTimer); loadTickTimer = null; }
+  }
+  async function fetchWithTimeout(url, options, ms) {
+    const ctrl = new AbortController();
+    const id = setTimeout(() => ctrl.abort(), ms);
+    try {
+      return await fetch(url, { ...options, signal: ctrl.signal });
+    } catch (e) {
+      if (e.name === 'AbortError') throw new Error('요청 시간 초과(5분). 새로고침 후 다시 시도하세요. 두 번째는 캐시로 더 빠릅니다.');
+      throw e;
+    } finally { clearTimeout(id); }
+  }
   async function pushFirebase(data) {
     if (applyingRemote || !window.firebaseSync) return;
     try {
@@ -736,7 +771,7 @@
     if (!user || !pw) { setStatus('error','로그인 정보를 입력하세요'); showError('아이디와 비밀번호를 입력해야 데이터를 불러올 수 있습니다.'); toggleSettings(true); return; }
     localStorage.setItem('miso_user', user); localStorage.setItem('miso_pw', pw); localStorage.setItem('miso_service', serviceEl.value);
     localStorage.setItem('miso_api_base', apiBaseEl.value.trim());
-    loading = true; setStatus('loading','갱신 중…'); clearError();
+    loading = true; setStatus('loading','갱신 중…'); clearError(); startLoadTimer();
     try {
       if (force) await fetch(apiUrl('/api/clear-cache'));
       const qs = new URLSearchParams({
@@ -744,7 +779,11 @@
         dayA: $('dayA').value, dayB: $('dayB').value,
         rangeStart: $('rangeStart').value, rangeEnd: $('rangeEnd').value,
       });
-      const res = await fetch(apiUrl('/api/dashboard?') + qs.toString(), { headers:{ 'x-miso-user':user, 'x-miso-pass':pw } });
+      const res = await fetchWithTimeout(
+        apiUrl('/api/dashboard?') + qs.toString(),
+        { headers:{ 'x-miso-user':user, 'x-miso-pass':pw } },
+        300000
+      );
       const data = await parseJsonResponse(res);
       if (!res.ok) throw new Error(data.error || ('오류 '+res.status));
       renderAll(data);
@@ -752,8 +791,12 @@
       pushFirebase(data);
     } catch (e) {
       setStatus('error','오류 발생');
-      showError(/로그인|인증|401/.test(e.message) ? ('로그인 실패: '+e.message+' (아이디/비밀번호를 확인하세요)') : ('데이터 조회 실패: '+e.message));
-    } finally { loading = false; scheduleNext(); }
+      let msg = e.message || '';
+      if (/failed to fetch/i.test(msg)) {
+        msg = 'API 서버에 연결할 수 없습니다. 설정 → API 서버를 비우고 적용하세요. (자동: Render API 사용)';
+      }
+      showError(/로그인|인증|401/.test(e.message) ? ('로그인 실패: '+e.message+' (아이디/비밀번호를 확인하세요)') : ('데이터 조회 실패: '+msg));
+    } finally { loading = false; stopLoadTimer(); scheduleNext(); }
   }
 
   function scheduleNext() {

@@ -21,7 +21,7 @@ const DEFAULT_SERVICE_ID = 586; // 미소방문이사
 const TIMEZONE = 'Asia/Seoul';
 
 const PAGE_LIMIT = 50; // 목록 페이지당 건수
-const CONCURRENCY = 10; // 결제 조회 동시 요청 수
+const CONCURRENCY = Number(process.env.CONCURRENCY || 20); // 결제 조회 동시 요청 수
 
 // 접수(created_at) 기준으로 거슬러 올라가 스캔할 일수.
 // 계약(결제)은 보통 접수 후 수일 내 발생하므로, 최근 N일 접수 주문만 보면
@@ -758,7 +758,10 @@ async function handleApiRequest(req, res) {
       rangeEnd: url.searchParams.get('rangeEnd'),
     };
     try {
+      console.log('[dashboard] start serviceId=%s', serviceId);
+      const t0 = Date.now();
       const data = await computeMetricsWithAuth(auth, serviceId, opts);
+      console.log('[dashboard] done in %ds', Math.round((Date.now() - t0) / 1000));
       return sendJson(res, 200, data);
     } catch (e) {
       const code = e.status === 401 || e.isAuth ? 401 : 500;
