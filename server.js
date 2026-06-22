@@ -21,7 +21,9 @@ const DEFAULT_SERVICE_ID = 586; // 미소방문이사
 const TIMEZONE = 'Asia/Seoul';
 
 const PAGE_LIMIT = 50; // 목록 페이지당 건수
-const CONCURRENCY = Number(process.env.CONCURRENCY || 20); // 결제 조회 동시 요청 수
+const CONCURRENCY = Number(process.env.CONCURRENCY || 10); // 결제 조회 동시 요청 수
+const RETRY_429_BASE_MS = Number(process.env.RETRY_429_BASE_MS || 2000);
+const RETRY_429_MAX = Number(process.env.RETRY_429_MAX || 6); // 2s, 4s, 8s … 최대 6회
 
 // 접수(created_at) 기준으로 거슬러 올라가 스캔할 일수.
 // 계약(결제)은 보통 접수 후 수일 내 발생하므로, 최근 N일 접수 주문만 보면
@@ -104,7 +106,11 @@ function toSeoulHour(input) {
   return isNaN(n) ? null : n % 24;
 }
 
-async function apiGet(url, token) {
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function apiGet(url, token, attempt429 = 0) {
   const res = await fetch(url, {
     headers: { Authorization: token.startsWith('Bearer ') ? token : 'Bearer ' + token },
   });
@@ -114,6 +120,12 @@ async function apiGet(url, token) {
     body = text ? JSON.parse(text) : null;
   } catch (_) {
     body = text;
+  }
+  if (res.status === 429 && attempt429 < RETRY_429_MAX) {
+    const delay = RETRY_429_BASE_MS * Math.pow(2, attempt429);
+    console.warn('[apiGet] 429 rate limit — retry in %dms (attempt %d/%d)', delay, attempt429 + 1, RETRY_429_MAX);
+    await sleep(delay);
+    return apiGet(url, token, attempt429 + 1);
   }
   if (!res.ok) {
     const msg = (body && body.message) || ('HTTP ' + res.status);
@@ -190,6 +202,7 @@ async function mapWithConcurrency(items, limit, worker) {
 // 해당 서비스의 주문을 (상태 무관) 최신순으로 페이지네이션하며,
 // 접수일(created_at)이 fetchStart 이상인 주문만 수집한다.
 // 기본 정렬은 created_at 내림차순이므로 fetchStart 이전이 나오면 중단한다.
+// created_at 내림차순 페이지네이션 → fetchStart 미만 접수가 나오면 즉시 중단
 async function fetchRequestsInWindow(token, serviceId, fetchStart) {
   const collected = [];
   for (let page = 0; page < 120; page++) {
@@ -200,20 +213,19 @@ async function fetchRequestsInWindow(token, serviceId, fetchStart) {
     const data = await apiGet(REQUESTS_URL + '?' + qs.toString(), token);
     const rows = (data && (data.requests || data.data || data.rows)) || [];
     if (!rows.length) break;
-    let oldestInPage = null;
+
+    let pastWindow = false;
     for (const r of rows) {
-      collected.push(r);
       const cd = toSeoulDate(r.created_at);
-      if (cd && (oldestInPage === null || cd < oldestInPage)) oldestInPage = cd;
+      if (!cd || cd < fetchStart) {
+        pastWindow = true;
+        break;
+      }
+      collected.push(r);
     }
-    if (rows.length < PAGE_LIMIT) break;
-    if (oldestInPage && oldestInPage < fetchStart) break;
+    if (pastWindow || rows.length < PAGE_LIMIT) break;
   }
-  // 윈도우 밖(과거) 접수 제거
-  return collected.filter((r) => {
-    const cd = toSeoulDate(r.created_at);
-    return cd && cd >= fetchStart;
-  });
+  return collected;
 }
 
 // 단일 주문의 "최신 성공 결제 시각" 조회 (캐시 활용)
@@ -249,10 +261,21 @@ async function fetchPaymentAt(token, requestId) {
   return paymentAt;
 }
 
+function minYmd(...dates) {
+  const valid = dates.filter((d) => d && /^\d{4}-\d{2}-\d{2}$/.test(d));
+  return valid.reduce((a, b) => (a < b ? a : b));
+}
+
+function maxYmd(...dates) {
+  const valid = dates.filter((d) => d && /^\d{4}-\d{2}-\d{2}$/.test(d));
+  return valid.reduce((a, b) => (a > b ? a : b));
+}
+
 function clampYmd(v, fallback) {
   return /^\d{4}-\d{2}-\d{2}$/.test(v || '') ? v : fallback;
 }
 
+// 대시보드·시트에 필요한 접수/결제 기준일 윈도우 (586 등 서비스 공통)
 function resolveOpts(opts) {
   opts = opts || {};
   const today = todaySeoul();
@@ -265,10 +288,34 @@ function resolveOpts(opts) {
   let rangeStart = clampYmd(opts.rangeStart, sevenStart);
   let rangeEnd = clampYmd(opts.rangeEnd, today);
   if (rangeStart > rangeEnd) { const t = rangeStart; rangeStart = rangeEnd; rangeEnd = t; }
-  const earliest = [sevenStart, weekStart, yesterday, dayA, dayB, rangeStart].reduce((a, b) => (a < b ? a : b));
-  const fetchStart = [shiftDate(earliest, -PAYMENT_LAG_DAYS), shiftDate(today, -LOOKBACK_DAYS)]
-    .reduce((a, b) => (a < b ? a : b));
-  return { today, yesterday, sevenStart, weekStart, weekEnd, dayA, dayB, rangeStart, rangeEnd, fetchStart };
+
+  // 접수(lead-in) 지표에 필요한 최소 접수일
+  const leadStart = minYmd(sevenStart, weekStart, yesterday, dayB, rangeStart);
+  // 결제(contract) 지표에 필요한 결제일 범위
+  const paymentStart = minYmd(today, yesterday, dayA, dayB, rangeStart, sevenStart, weekStart);
+  const paymentEnd = maxYmd(today, dayA, dayB, rangeEnd, weekEnd);
+
+  // 주문 목록(created_at desc): 접수·결제 지표를 커버하는 접수일 하한만 스캔
+  // 결제는 접수 후 발생 → paymentStart 이전 PAYMENT_LAG_DAYS 만큼 접수분 추가 포함
+  const neededStart = minYmd(leadStart, shiftDate(paymentStart, -PAYMENT_LAG_DAYS));
+  const lookbackCap = shiftDate(today, -LOOKBACK_DAYS);
+  const fetchStart = maxYmd(neededStart, lookbackCap);
+
+  return {
+    today, yesterday, sevenStart, weekStart, weekEnd,
+    dayA, dayB, rangeStart, rangeEnd,
+    leadStart, paymentStart, paymentEnd, fetchStart,
+  };
+}
+
+// confirming/complete 만 결제 API 호출. 접수일이 결제 관심 구간 밖이면 스킵.
+function shouldFetchPayment(req, ctx) {
+  if (!PAID_STATUSES.includes(req.status)) return false;
+  const createdYmd = toSeoulDate(req.created_at);
+  if (!createdYmd || createdYmd < ctx.fetchStart) return false;
+  // 결제일 ≥ 접수일 → 접수일이 paymentEnd 보다 늦으면 해당 결제 구간에 기여 불가
+  if (createdYmd > ctx.paymentEnd) return false;
+  return true;
 }
 
 function cacheKey(serviceId, ctx) {
@@ -313,11 +360,16 @@ async function loadQualifiedData(token, serviceId, opts) {
   }
 
   const rows = await fetchRequestsInWindow(token, serviceId, ctx.fetchStart);
+  console.log('[load] serviceId=%s fetchStart=%s leadStart=%s payment=%s..%s requests=%d',
+    serviceId, ctx.fetchStart, ctx.leadStart, ctx.paymentStart, ctx.paymentEnd, rows.length);
+  let paymentSkipped = 0;
   const enriched = await mapWithConcurrency(rows, CONCURRENCY, async (req) => {
     const createdYmd = toSeoulDate(req.created_at);
     let paymentAt = null;
-    if (PAID_STATUSES.includes(req.status)) {
+    if (shouldFetchPayment(req, ctx)) {
       paymentAt = await fetchPaymentAt(token, req.id);
+    } else if (PAID_STATUSES.includes(req.status)) {
+      paymentSkipped += 1;
     }
     return {
       id: req.id,
@@ -336,6 +388,7 @@ async function loadQualifiedData(token, serviceId, opts) {
     qualified,
     context: ctx,
     excludedUnqualified: enriched.length - qualified.length,
+    paymentSkipped,
     generatedAt: new Date().toISOString(),
     fetchedAt: Date.now(),
   };
