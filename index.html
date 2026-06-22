@@ -1,0 +1,856 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>실시간 계약 대시보드 · 미소방문이사</title>
+<link rel="icon" type="image/svg+xml" href="/miso-logo.svg" />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<style>
+  :root {
+    --bg: #f3f5fb;
+    --card: #ffffff;
+    --text: #1f2a44;
+    --muted: #8a94ad;
+    --line: #eef1f7;
+    --indigo: #6366f1;
+    --blue: #3b82f6;
+    --green: #22c55e;
+    --amber: #f59e0b;
+    --red: #ef4444;
+    --purple: #a855f7;
+    --cyan: #06b6d4;
+    --shadow: 0 1px 3px rgba(16,24,40,.06), 0 1px 2px rgba(16,24,40,.04);
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    margin: 0;
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", "Noto Sans KR", sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    -webkit-font-smoothing: antialiased;
+  }
+  .app { display: flex; min-height: 100vh; }
+
+  /* 사이드바 */
+  .sidebar {
+    width: 76px; background: #fff; border-right: 1px solid var(--line);
+    display: flex; flex-direction: column; align-items: center; padding: 18px 0; gap: 10px;
+    position: sticky; top: 0; height: 100vh;
+  }
+  .logo { display: grid; place-items: center; margin-bottom: 16px; padding: 0 4px; }
+  .logo img { width: 52px; height: auto; display: block; }
+  .nav-ic { width: 42px; height: 42px; border-radius: 12px; display: grid; place-items: center; color: var(--muted); cursor: default; }
+  .nav-ic.active { background: #eef0fe; color: var(--indigo); }
+  .sidebar .spacer { flex: 1; }
+  .nav-ic svg, .logo svg { width: 20px; height: 20px; }
+
+  /* 메인 */
+  .main { flex: 1; padding: 22px 30px 40px; max-width: 1500px; margin: 0 auto; width: 100%; }
+  .topbar { display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; margin-bottom: 22px; }
+  .topbar h1 { font-size: 22px; font-weight: 800; margin: 0; letter-spacing: -.02em; }
+  .topbar .sub { color: var(--muted); font-size: 13px; margin-top: 3px; }
+  .actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .status { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 12.5px; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
+  .dot.live { background: var(--green); box-shadow: 0 0 0 0 rgba(34,197,94,.5); animation: pulse 1.8s infinite; }
+  .dot.loading { background: var(--amber); }
+  .dot.error { background: var(--red); }
+  @keyframes pulse { 0%{box-shadow:0 0 0 0 rgba(34,197,94,.5)} 70%{box-shadow:0 0 0 7px rgba(34,197,94,0)} 100%{box-shadow:0 0 0 0 rgba(34,197,94,0)} }
+
+  button { font-family: inherit; cursor: pointer; border: none; }
+  .btn { background: var(--indigo); color: #fff; border-radius: 10px; padding: 9px 15px; font-size: 13px; font-weight: 600; box-shadow: 0 4px 12px rgba(99,102,241,.25); }
+  .btn.ghost { background: #fff; color: var(--text); border: 1px solid var(--line); box-shadow: var(--shadow); }
+  .btn:disabled { opacity: .55; cursor: default; }
+
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 16px; box-shadow: var(--shadow); padding: 20px 22px; }
+  .card h3 { margin: 0; font-size: 15px; font-weight: 700; }
+  .card .cap { color: var(--muted); font-size: 12px; margin-top: 2px; }
+  .card-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; margin-bottom: 14px; }
+
+  /* KPI */
+  .kpis { display: grid; grid-template-columns: repeat(4, 1fr); gap: 18px; margin-bottom: 20px; }
+  .kpi { display: flex; align-items: center; gap: 16px; }
+  .kpi .chip { width: 52px; height: 52px; border-radius: 14px; display: grid; place-items: center; flex-shrink: 0; }
+  .kpi .chip svg { width: 24px; height: 24px; }
+  .kpi .num { font-size: 27px; font-weight: 800; letter-spacing: -.02em; line-height: 1.1; }
+  .kpi .num .u { font-size: 14px; font-weight: 600; color: var(--muted); margin-left: 3px; }
+  .kpi .lbl { font-size: 12.5px; color: var(--muted); margin-top: 2px; }
+  .kpi .delta { font-size: 12px; font-weight: 700; margin-top: 6px; display: inline-flex; align-items: center; gap: 3px; }
+  .delta.up { color: var(--green); }
+  .delta.down { color: var(--red); }
+  .delta.flat { color: var(--muted); }
+  .chip.green { background: #e7f9ef; color: var(--green); }
+  .chip.blue { background: #e8f1ff; color: var(--blue); }
+  .chip.amber { background: #fef3e2; color: var(--amber); }
+  .chip.indigo { background: #eef0fe; color: var(--indigo); }
+  .chip.purple { background: #f5eafe; color: var(--purple); }
+
+  .grid-2 { display: grid; grid-template-columns: 2fr 1fr; gap: 18px; margin-bottom: 20px; }
+  @media (max-width: 1080px) { .grid-2 { grid-template-columns: 1fr; } .kpis { grid-template-columns: repeat(2,1fr);} }
+  @media (max-width: 560px) { .kpis { grid-template-columns: 1fr; } }
+
+  .chart-wrap { position: relative; height: 320px; }
+  .chart-wrap.sm { height: 280px; }
+  .donut-center { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; pointer-events: none; }
+  .donut-center .big { font-size: 30px; font-weight: 800; }
+  .donut-center .small { font-size: 12px; color: var(--muted); }
+
+  .toggle { display: inline-flex; background: #f1f3f9; border-radius: 10px; padding: 3px; }
+  .toggle button { background: transparent; color: var(--muted); border-radius: 8px; padding: 6px 12px; font-size: 12.5px; font-weight: 600; }
+  .toggle button.on { background: #fff; color: var(--text); box-shadow: var(--shadow); }
+
+  .ctl { display: inline-flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+  .ctl input[type=date] { border: 1px solid #dfe3ec; border-radius: 9px; padding: 6px 9px; font-size: 12.5px; font-family: inherit; color: var(--text); background: #fff; outline: none; }
+  .ctl input[type=date]:focus { border-color: var(--indigo); }
+  .ctl .sep { color: var(--muted); font-size: 12px; }
+  .preset { background: #f1f3f9; color: var(--muted); border-radius: 8px; padding: 6px 10px; font-size: 12px; font-weight: 600; }
+  .preset:hover { color: var(--text); }
+  .preset.on { background: #eef0fe; color: var(--indigo); }
+  .summary-chips { display: flex; gap: 22px; flex-wrap: wrap; margin: 2px 0 14px; }
+  .summary-chips .it .n { font-size: 20px; font-weight: 800; letter-spacing: -.02em; }
+  .summary-chips .it .l { font-size: 11.5px; color: var(--muted); }
+
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th, td { text-align: left; padding: 11px 10px; border-bottom: 1px solid var(--line); }
+  th { color: var(--muted); font-weight: 600; font-size: 11.5px; text-transform: uppercase; letter-spacing: .03em; }
+  tbody tr:last-child td { border-bottom: none; }
+  td a { color: var(--indigo); text-decoration: none; font-weight: 600; }
+  .empty { color: var(--muted); padding: 26px; text-align: center; }
+  .pill { display:inline-block; padding:2px 9px; border-radius:999px; font-size:11px; font-weight:700; background:#e7f9ef; color:var(--green); }
+  .legend { display: flex; gap: 16px; flex-wrap: wrap; margin-top: 12px; font-size: 12.5px; color: var(--muted); }
+  .legend i { width: 10px; height: 10px; border-radius: 3px; display: inline-block; margin-right: 6px; vertical-align: middle; }
+
+  /* 설정/에러 */
+  .panel { background: #fff; border: 1px solid var(--line); border-radius: 16px; box-shadow: var(--shadow); padding: 18px; margin-bottom: 20px; display: none; }
+  .panel.open { display: flex; flex-wrap: wrap; gap: 14px; align-items: flex-end; }
+  .field { display: flex; flex-direction: column; gap: 5px; }
+  .field label { font-size: 12px; color: var(--muted); }
+  .field input, .field select { background: #fff; border: 1px solid #dfe3ec; color: var(--text); border-radius: 10px; padding: 9px 11px; font-size: 13px; outline: none; font-family: inherit; }
+  .field input:focus, .field select:focus { border-color: var(--indigo); }
+  .err { background: #fef2f2; border: 1px solid #fecaca; color: #b91c1c; padding: 12px 14px; border-radius: 12px; margin-bottom: 18px; font-size: 13px; display: none; }
+  .help { font-size: 12px; color: var(--muted); margin-top: 4px; flex-basis: 100%; }
+  .help code { background: #f1f3f9; padding: 1px 6px; border-radius: 5px; }
+
+  /* 클릭 가능 대시보드 */
+  .drillable { cursor: pointer; transition: box-shadow .15s, border-color .15s; position: relative; }
+  .drillable:hover { box-shadow: 0 4px 16px rgba(99,102,241,.12); border-color: #c7d2fe; }
+  .drillable::after {
+    content: '클릭하여 상세 보기';
+    position: absolute; right: 14px; bottom: 10px;
+    font-size: 10.5px; color: var(--muted); opacity: 0; transition: opacity .15s;
+  }
+  .drillable:hover::after { opacity: 1; }
+  .kpi.drillable::after { bottom: 12px; }
+  .drillable .toggle, .drillable .ctl, .drillable input, .drillable button.preset { position: relative; z-index: 2; }
+
+  /* 시트 패널 */
+  .sheet-overlay {
+    position: fixed; inset: 0; background: rgba(15,23,42,.35);
+    z-index: 1000; display: none; align-items: flex-end; justify-content: center;
+  }
+  .sheet-overlay.open { display: flex; }
+  .sheet-panel {
+    background: #fff; width: min(1200px, 100%);
+    height: 85vh; min-height: 85vh; max-height: 85vh;
+    border-radius: 18px 18px 0 0; box-shadow: 0 -8px 40px rgba(16,24,40,.18);
+    display: flex; flex-direction: column; animation: slideUp .22s ease;
+  }
+  @keyframes slideUp { from { transform: translateY(100%); } to { transform: translateY(0); } }
+  .sheet-head {
+    display: flex; align-items: flex-start; justify-content: space-between; gap: 12px;
+    padding: 18px 22px 16px; border-bottom: 1px solid var(--line); flex-shrink: 0;
+  }
+  .sheet-head h3 { margin: 0; font-size: 16px; font-weight: 800; }
+  .sheet-head .sub { font-size: 12.5px; color: var(--muted); margin-top: 3px; }
+  .sheet-actions { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
+  .sheet-actions input {
+    border: 1px solid #dfe3ec; border-radius: 9px; padding: 7px 10px; font-size: 13px;
+    width: 180px; font-family: inherit; outline: none;
+  }
+  .sheet-actions input:focus { border-color: var(--indigo); }
+  .sheet-tabs { display: flex; gap: 8px; padding: 16px 22px 12px; flex-shrink: 0; flex-wrap: wrap; }
+  .sheet-tab {
+    background: #f1f3f9; color: var(--muted); border-radius: 8px; padding: 6px 12px;
+    font-size: 12px; font-weight: 600;
+  }
+  .sheet-tab.on { background: #eef0fe; color: var(--indigo); }
+  .sheet-body { flex: 1; min-height: 0; overflow: auto; padding: 0 22px 12px; }
+  .sheet-body table { font-size: 12.5px; }
+  .sheet-body th { position: sticky; top: 0; background: #fff; z-index: 1; cursor: pointer; user-select: none; white-space: nowrap; }
+  .sheet-body th:hover { color: var(--indigo); }
+  .sheet-body th .sort { margin-left: 4px; opacity: .5; font-size: 10px; }
+  .sheet-foot {
+    padding: 10px 22px 16px; border-top: 1px solid var(--line);
+    font-size: 12px; color: var(--muted); flex-shrink: 0;
+  }
+</style>
+</head>
+<body>
+<div class="app">
+  <aside class="sidebar">
+    <div class="logo"><img src="/miso-logo.svg" alt="miso" /></div>
+  </aside>
+
+  <main class="main">
+    <div class="topbar">
+      <div>
+        <h1>실시간 계약 대시보드</h1>
+        <div class="sub" id="subInfo">미소방문이사 (586) · 접수=생성일, 계약=결제 일시 기준</div>
+      </div>
+      <div class="actions">
+        <div class="status"><span id="dot" class="dot"></span><span id="statusText">대기 중</span></div>
+        <button class="btn ghost" id="reloadBtn">새로고침</button>
+        <button class="btn ghost" id="settingsBtn">설정</button>
+      </div>
+    </div>
+
+    <div class="panel" id="settings">
+      <div class="field"><label for="userId">아이디</label><input id="userId" type="text" placeholder="아이디" autocomplete="username" style="width:160px" /></div>
+      <div class="field"><label for="userPw">비밀번호</label><input id="userPw" type="password" placeholder="비밀번호" autocomplete="current-password" style="width:160px" /></div>
+      <div class="field"><label for="serviceId">서비스 ID</label><input id="serviceId" type="number" value="586" style="width:100px" /></div>
+      <div class="field"><label for="interval">자동 새로고침</label>
+        <select id="interval"><option value="60">1분</option><option value="300">5분</option><option value="0">수동</option></select>
+      </div>
+      <div class="field"><label for="apiBase">API 서버</label>
+        <input id="apiBase" type="url" placeholder="http://localhost:4000" style="width:220px" />
+        <button type="button" class="btn ghost" id="apiLocalBtn" style="margin-left:6px">이 PC</button>
+      </div>
+      <button class="btn" id="applyBtn">적용</button>
+      <button class="btn ghost" id="forceBtn" title="결제 캐시 비우고 전체 재조회">강제 재조회</button>
+      <div class="help"><code>rfq-admin.miso.kr</code> 백오피스 계정으로 로그인합니다. 계정 정보는 이 브라우저에만 저장됩니다.<br>
+        팀 공유 URL: <a href="https://mvc-contract-cdb96.web.app" target="_blank" rel="noopener">mvc-contract-cdb96.web.app</a></div>
+    </div>
+
+    <div id="err" class="err"></div>
+
+    <!-- KPI -->
+    <section class="kpis">
+      <div class="card kpi drillable" data-sheet="todayContracts">
+        <div class="chip green"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11"/></svg></div>
+        <div>
+          <div class="num"><span id="m_todayContract">–</span><span class="u">건</span></div>
+          <div class="lbl">오늘 계약 (Today Contract)</div>
+          <div class="delta flat" id="d_today">–</div>
+        </div>
+      </div>
+      <div class="card kpi drillable" data-sheet="yesterdayLeads">
+        <div class="chip blue"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 12h-6l-2 3h-4l-2-3H2"/><path d="M5.45 5.11L2 12v6a2 2 0 002 2h16a2 2 0 002-2v-6l-3.45-6.89A2 2 0 0016.76 4H7.24a2 2 0 00-1.79 1.11z"/></svg></div>
+        <div>
+          <div class="num"><span id="m_yLead">–</span><span class="u">건</span></div>
+          <div class="lbl">어제 접수 (Yesterday Lead-in)</div>
+          <div class="delta flat" id="d_yLead">unqualified 제외</div>
+        </div>
+      </div>
+      <div class="card kpi drillable" data-sheet-tabs='[{"type":"todayContracts","label":"오늘 계약(분자)"},{"type":"yesterdayLeads","label":"어제 접수(분모)"}]'>
+        <div class="chip amber"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="19" y1="5" x2="5" y2="19"/><circle cx="6.5" cy="6.5" r="2.5"/><circle cx="17.5" cy="17.5" r="2.5"/></svg></div>
+        <div>
+          <div class="num"><span id="m_yRate">–</span><span class="u">%</span></div>
+          <div class="lbl">어제 접수 대비 전환율</div>
+          <div class="delta flat" id="d_yRate">오늘 계약 / 어제 접수</div>
+        </div>
+      </div>
+      <div class="card kpi drillable" data-sheet-tabs='[{"type":"sevenDayContracts","label":"7일 계약(분자)"},{"type":"sevenDayLeads","label":"7일 접수(분모)"}]'>
+        <div class="chip indigo"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/><polyline points="17 6 23 6 23 12"/></svg></div>
+        <div>
+          <div class="num"><span id="m_r7">–</span><span class="u">%</span></div>
+          <div class="lbl">최근 7일 전환율</div>
+          <div class="delta flat" id="d_r7">7일 계약 / 7일 접수</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 타임테이블 + 도넛 -->
+    <section class="grid-2">
+      <div class="card drillable" id="cardTimetable" data-sheet-tabs='[{"type":"hourlySummary","label":"시간대 요약"},{"type":"timetableOrders","label":"기준일 상세","dayKey":"dayA"},{"type":"timetableOrders","label":"비교일 상세","dayKey":"dayB"}]'>
+        <div class="card-head">
+          <div>
+            <h3 id="timeTitle">시간대별 계약 비교</h3>
+            <div class="cap" id="timeCap">두 날짜의 시간대(0~23시)별 계약 건수 비교</div>
+          </div>
+          <div class="toggle">
+            <button id="tg_hourly" class="on">시간대별</button>
+            <button id="tg_cum">누적</button>
+          </div>
+        </div>
+        <div class="ctl" style="margin-bottom:14px">
+          <span class="sep">기준일</span>
+          <input type="date" id="dayA" />
+          <span class="sep">vs 비교일</span>
+          <input type="date" id="dayB" />
+          <button class="preset" id="ttToday">오늘·어제</button>
+        </div>
+        <div class="chart-wrap"><canvas id="chTime"></canvas></div>
+      </div>
+      <div class="card drillable" id="cardDonut" data-sheet-tabs='[{"type":"rangeContracts","label":"기간 계약(분자)"},{"type":"rangeLeads","label":"기간 접수(분모)"}]'>
+        <div class="card-head"><div><h3>기간 전환율</h3><div class="cap" id="rngCap">선택 기간 · 계약 / 접수</div></div></div>
+        <div class="chart-wrap sm"><canvas id="chDonut"></canvas>
+          <div class="donut-center"><div class="big" id="donutPct">–</div><div class="small">기간 전환율</div></div>
+        </div>
+        <div class="legend">
+          <span><i style="background:#6366f1"></i>기간 계약 <b id="lg_wc" style="color:var(--text)">–</b></span>
+          <span><i style="background:#e5e9f2"></i>기간 접수 <b id="lg_wl" style="color:var(--text)">–</b></span>
+        </div>
+      </div>
+    </section>
+
+    <!-- 기간별 막대 + 오늘 계약 표 -->
+    <section class="grid-2">
+      <div class="card drillable" id="cardDays" data-sheet-tabs='[{"type":"dailySummary","label":"일자 요약"},{"type":"rangeContracts","label":"기간 계약"},{"type":"rangeLeads","label":"기간 접수"}]'>
+        <div class="card-head">
+          <div><h3>기간별 계약 · 접수</h3><div class="cap" id="daysCap">일자별 계약/접수 건수</div></div>
+        </div>
+        <div class="ctl" style="margin-bottom:12px">
+          <input type="date" id="rangeStart" />
+          <span class="sep">~</span>
+          <input type="date" id="rangeEnd" />
+          <button class="preset" data-range="7">최근 7일</button>
+          <button class="preset" data-range="week">이번 주</button>
+          <button class="preset" data-range="month">이번 달</button>
+          <button class="preset" data-range="30">최근 30일</button>
+        </div>
+        <div class="summary-chips">
+          <div class="it"><div class="n" id="rg_contract" style="color:var(--green)">–</div><div class="l">기간 계약</div></div>
+          <div class="it"><div class="n" id="rg_lead" style="color:var(--blue)">–</div><div class="l">기간 접수</div></div>
+          <div class="it"><div class="n" id="rg_rate" style="color:var(--amber)">–<span style="font-size:13px">%</span></div><div class="l">기간 전환율</div></div>
+        </div>
+        <div class="chart-wrap sm"><canvas id="chDays"></canvas></div>
+      </div>
+      <div class="card drillable" id="cardToday" data-sheet="todayContracts">
+        <div class="card-head"><div><h3>오늘 계약된 주문</h3><div class="cap">결제 일시 기준</div></div></div>
+        <div style="max-height:360px;overflow:auto">
+          <table>
+            <thead><tr><th>주문 ID</th><th>전화번호</th><th>지역</th><th>결제 일시</th></tr></thead>
+            <tbody id="todayBody"><tr><td colspan="4" class="empty">데이터를 불러오세요.</td></tr></tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+  </main>
+</div>
+
+<!-- 시트 패널 -->
+<div class="sheet-overlay" id="sheetOverlay">
+  <div class="sheet-panel" id="sheetPanel">
+    <div class="sheet-head">
+      <div>
+        <h3 id="sheetTitle">–</h3>
+        <div class="sub" id="sheetSub">–</div>
+      </div>
+      <div class="sheet-actions">
+        <input type="search" id="sheetSearch" placeholder="주문 ID, 전화, 지역 검색…" />
+        <button class="btn ghost" id="sheetCsv">CSV</button>
+        <button class="btn ghost" id="sheetClose">닫기</button>
+      </div>
+    </div>
+    <div class="sheet-tabs" id="sheetTabs"></div>
+    <div class="sheet-body">
+      <table>
+        <thead id="sheetHead"><tr></tr></thead>
+        <tbody id="sheetBody"><tr><td colspan="8" class="empty">로딩 중…</td></tr></tbody>
+      </table>
+    </div>
+    <div class="sheet-foot" id="sheetFoot">–</div>
+  </div>
+</div>
+
+<script src="config.js"></script>
+<script type="module">
+  import { publishDashboard, subscribeDashboard } from './firebase-sync.js';
+  window.firebaseSync = { publishDashboard, subscribeDashboard };
+  window.dispatchEvent(new Event('firebase-ready'));
+</script>
+<script>
+  const $ = (id) => document.getElementById(id);
+  const userEl = $('userId'), pwEl = $('userPw'), serviceEl = $('serviceId'), intervalEl = $('interval'), apiBaseEl = $('apiBase');
+  function getApiBase() {
+    const stored = localStorage.getItem('miso_api_base');
+    if (stored !== null && stored !== '') return stored.replace(/\/$/, '');
+    return (window.DASHBOARD_API_BASE || '').replace(/\/$/, '');
+  }
+  function apiUrl(path) { return getApiBase() + path; }
+  const dot = $('dot'), statusText = $('statusText'), errBox = $('err');
+
+  userEl.value = localStorage.getItem('miso_user') || '';
+  pwEl.value = localStorage.getItem('miso_pw') || '';
+  serviceEl.value = localStorage.getItem('miso_service') || '586';
+  intervalEl.value = localStorage.getItem('miso_interval') || '60';
+  apiBaseEl.value = localStorage.getItem('miso_api_base') ?? (window.DASHBOARD_API_BASE || '');
+
+  let timer = null, countdownTimer = null, nextAt = 0, loading = false;
+  let lastData = null, timeMode = 'hourly';
+  let chTime = null, chDonut = null, chDays = null;
+  let applyingRemote = false;
+  let appStarted = false;
+
+  const C = { indigo:'#6366f1', blue:'#3b82f6', green:'#22c55e', amber:'#f59e0b', grayBar:'#e5e9f2', muted:'#8a94ad' };
+
+  function setStatus(state, text) { dot.className = 'dot ' + (state||''); statusText.textContent = text; }
+  function showError(msg) { errBox.style.display = 'block'; errBox.textContent = msg; }
+  function clearError() { errBox.style.display = 'none'; }
+  function pct(v) { return (v===null||v===undefined) ? '–' : (v*100).toFixed(2); }
+  function fmt(ts) {
+    if (!ts) return '–'; const d = new Date(ts); if (isNaN(d)) return '–';
+    return new Intl.DateTimeFormat('ko-KR',{timeZone:'Asia/Seoul',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',hour12:false}).format(d);
+  }
+  function seoulHourNow() {
+    return parseInt(new Intl.DateTimeFormat('en-GB',{timeZone:'Asia/Seoul',hour:'2-digit',hourCycle:'h23'}).format(new Date()),10) % 24;
+  }
+  function reqLink(id) { return '<a href="https://rfq-admin.miso.kr/requests/'+id+'" target="_blank">'+id+'</a>'; }
+  function fmtFull(ts) {
+    if (!ts) return '–'; const d = new Date(ts); if (isNaN(d)) return '–';
+    return new Intl.DateTimeFormat('ko-KR',{timeZone:'Asia/Seoul',year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',second:'2-digit',hour12:false}).format(d);
+  }
+  function authHeaders() {
+    return { 'x-miso-user': userEl.value.trim(), 'x-miso-pass': pwEl.value };
+  }
+  async function parseJsonResponse(res) {
+    const text = await res.text();
+    try {
+      return JSON.parse(text);
+    } catch (_) {
+      if (/^\s*</.test(text)) {
+        throw new Error('API 서버 응답이 없습니다. 배포가 완료되었는지 확인하거나 로컬에서는 npm start로 실행하세요.');
+      }
+      throw new Error('잘못된 API 응답 형식');
+    }
+  }
+  function dashParams() {
+    return {
+      serviceId: serviceEl.value,
+      dayA: $('dayA').value, dayB: $('dayB').value,
+      rangeStart: $('rangeStart').value, rangeEnd: $('rangeEnd').value,
+    };
+  }
+
+  // ---- 시트 패널 ----
+  let sheetState = null, sheetData = null, sheetTimer = null;
+
+  function closeSheet() {
+    $('sheetOverlay').classList.remove('open');
+    sheetState = null; sheetData = null;
+    $('sheetSearch').value = '';
+  }
+
+  function resolveTab(tab) {
+    const t = { ...tab };
+    if (t.dayKey === 'dayA') t.day = $('dayA').value;
+    if (t.dayKey === 'dayB') t.day = $('dayB').value;
+    return t;
+  }
+
+  function openSheet(cfg) {
+    sheetState = {
+      type: cfg.type,
+      tabs: cfg.tabs || null,
+      tabIndex: cfg.tabIndex || 0,
+      sort: cfg.sort || null,
+      dir: cfg.dir || 'asc',
+      day: cfg.day || null,
+      hour: cfg.hour !== undefined && cfg.hour !== null ? cfg.hour : null,
+    };
+    $('sheetOverlay').classList.add('open');
+    $('sheetSearch').value = '';
+    renderSheetTabs();
+    fetchSheet();
+  }
+
+  function openSheetFromEl(el) {
+    if (el.dataset.sheet) {
+      openSheet({ type: el.dataset.sheet });
+      return;
+    }
+    if (el.dataset.sheetTabs) {
+      const tabs = JSON.parse(el.dataset.sheetTabs).map(resolveTab);
+      openSheet({ type: tabs[0].type, tabs, tabIndex: 0, day: tabs[0].day, hour: tabs[0].hour });
+    }
+  }
+
+  function renderSheetTabs() {
+    const box = $('sheetTabs');
+    box.innerHTML = '';
+    if (!sheetState || !sheetState.tabs || sheetState.tabs.length < 2) { box.style.display = 'none'; return; }
+    box.style.display = 'flex';
+    sheetState.tabs.forEach((tab, i) => {
+      const b = document.createElement('button');
+      b.className = 'sheet-tab' + (i === sheetState.tabIndex ? ' on' : '');
+      b.textContent = tab.label;
+      b.onclick = () => {
+        sheetState.tabIndex = i;
+        const t = resolveTab(sheetState.tabs[i]);
+        sheetState.type = t.type;
+        sheetState.day = t.day || null;
+        sheetState.hour = t.hour !== undefined ? t.hour : null;
+        renderSheetTabs();
+        fetchSheet();
+      };
+      box.appendChild(b);
+    });
+  }
+
+  async function fetchSheet() {
+    if (!sheetState) return;
+    $('sheetBody').innerHTML = '<tr><td colspan="8" class="empty">로딩 중…</td></tr>';
+    const p = dashParams();
+    const qs = new URLSearchParams({ ...p, type: sheetState.type });
+    if (sheetState.day) qs.set('day', sheetState.day);
+    if (sheetState.hour !== null && sheetState.hour !== '') qs.set('hour', sheetState.hour);
+    if (sheetState.sort) { qs.set('sort', sheetState.sort); qs.set('dir', sheetState.dir); }
+    const q = $('sheetSearch').value.trim();
+    if (q) qs.set('q', q);
+    try {
+      const res = await fetch(apiUrl('/api/sheet?') + qs.toString(), { headers: authHeaders() });
+      const data = await parseJsonResponse(res);
+      if (!res.ok) throw new Error(data.error || ('오류 ' + res.status));
+      sheetData = data;
+      renderSheetTable(data);
+    } catch (e) {
+      $('sheetBody').innerHTML = '<tr><td colspan="8" class="empty">' + e.message + '</td></tr>';
+    }
+  }
+
+  function renderSheetTable(data) {
+    $('sheetTitle').textContent = data.title + ' (' + (data.filtered !== undefined ? data.filtered : data.total) + '건)';
+    $('sheetSub').textContent = data.subtitle || '';
+    const head = $('sheetHead').querySelector('tr');
+    head.innerHTML = data.columns.map((c) =>
+      '<th data-key="' + c.key + '">' + c.label + '<span class="sort">' +
+      (sheetState && sheetState.sort === c.key ? (sheetState.dir === 'asc' ? '▲' : '▼') : '') + '</span></th>'
+    ).join('');
+    head.querySelectorAll('th').forEach((th) => {
+      th.onclick = () => {
+        const key = th.dataset.key;
+        if (sheetState.sort === key) sheetState.dir = sheetState.dir === 'asc' ? 'desc' : 'asc';
+        else { sheetState.sort = key; sheetState.dir = 'asc'; }
+        fetchSheet();
+      };
+    });
+    if (!data.rows.length) {
+      $('sheetBody').innerHTML = '<tr><td colspan="' + data.columns.length + '" class="empty">데이터가 없습니다.</td></tr>';
+    } else {
+      $('sheetBody').innerHTML = data.rows.map((row) =>
+        '<tr>' + data.columns.map((c) => {
+          let v = row[c.key];
+          if (c.key === 'id') return '<td>' + reqLink(v) + '</td>';
+          if (c.key === 'created_at' || c.key === 'paymentAt') v = fmtFull(v);
+          return '<td>' + (v == null || v === '' ? '–' : v) + '</td>';
+        }).join('') + '</tr>'
+      ).join('');
+    }
+    const shown = data.filtered !== undefined ? data.filtered : data.rows.length;
+    $('sheetFoot').textContent = shown + ' / ' + data.total + '건 표시';
+  }
+
+  function exportSheetCsv() {
+    if (!sheetData || !sheetData.rows.length) return;
+    const cols = sheetData.columns;
+    const esc = (v) => '"' + String(v == null ? '' : v).replace(/"/g, '""') + '"';
+    const lines = [cols.map((c) => esc(c.label)).join(',')];
+    sheetData.rows.forEach((row) => {
+      lines.push(cols.map((c) => esc(row[c.key])).join(','));
+    });
+    const blob = new Blob(['\uFEFF' + lines.join('\n')], { type: 'text/csv;charset=utf-8' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = (sheetData.title || 'sheet') + '.csv';
+    a.click();
+    URL.revokeObjectURL(a.href);
+  }
+
+  function onChartClickTime(_ev, elems) {
+    if (!elems.length || !lastData) return;
+    const el = elems[0];
+    const hour = el.index;
+    const day = el.datasetIndex === 0 ? lastData.timetable.dayA : lastData.timetable.dayB;
+    openSheet({ type: 'timetableOrders', day, hour, tabs: [
+      { type: 'hourlySummary', label: '시간대 요약' },
+      { type: 'timetableOrders', label: day + ' ' + hour + '시', day, hour },
+    ], tabIndex: 1 });
+  }
+
+  function onChartClickDays(_ev, elems) {
+    if (!elems.length || !lastData) return;
+    const el = elems[0];
+    const day = lastData.range.days[el.index];
+    const isContract = el.datasetIndex === 0;
+    openSheet({ type: isContract ? 'dayContracts' : 'dayLeads', day, tabs: [
+      { type: 'dailySummary', label: '일자 요약' },
+      { type: 'dayContracts', label: day + ' 계약', day },
+      { type: 'dayLeads', label: day + ' 접수', day },
+    ], tabIndex: isContract ? 1 : 2 });
+  }
+
+  function renderTodayRows(items) {
+    const body = $('todayBody');
+    if (!items || !items.length) { body.innerHTML = '<tr><td colspan="4" class="empty">오늘 결제(계약)된 건이 없습니다.</td></tr>'; return; }
+    body.innerHTML = items.map((i) =>
+      '<tr><td>'+reqLink(i.id)+'</td><td>'+(i.phone||'–')+'</td><td>'+(i.region||'–')+'</td><td>'+fmt(i.paymentAt)+'</td></tr>'
+    ).join('');
+  }
+
+  // ---- 차트 ----
+  Chart.defaults.font.family = "'Inter','Noto Sans KR',sans-serif";
+  Chart.defaults.color = '#8a94ad';
+  Chart.defaults.plugins.legend.labels.usePointStyle = true;
+  Chart.defaults.plugins.legend.labels.boxWidth = 8;
+
+  function buildTimetable() {
+    if (!lastData) return;
+    const t = lastData.timetable;
+    const labels = t.hours.map((h) => h + '시');
+    const la = t.dayA + ' (' + t.aTotal + '건)', lb = t.dayB + ' (' + t.bTotal + '건)';
+    if (chTime) { chTime.destroy(); chTime = null; }
+    const ctx = $('chTime').getContext('2d');
+    if (timeMode === 'cumulative') {
+      const grad = ctx.createLinearGradient(0,0,0,300);
+      grad.addColorStop(0,'rgba(99,102,241,.25)'); grad.addColorStop(1,'rgba(99,102,241,0)');
+      chTime = new Chart(ctx, {
+        type: 'line',
+        data: { labels, datasets: [
+          { label:la, data:t.aCumulative, borderColor:C.indigo, backgroundColor:grad, fill:true, tension:.35, borderWidth:2.5, pointRadius:0, pointHoverRadius:4 },
+          { label:lb, data:t.bCumulative, borderColor:C.muted, borderDash:[5,4], fill:false, tension:.35, borderWidth:2, pointRadius:0, pointHoverRadius:4 },
+        ]},
+        options: chartOpts(true, onChartClickTime),
+      });
+      $('timeCap').textContent = '시간대별 누적 — 기준일이 위면 더 빠른 페이스 · 막대 클릭 시 해당 시간 상세';
+    } else {
+      chTime = new Chart(ctx, {
+        type: 'bar',
+        data: { labels, datasets: [
+          { label:la, data:t.aByHour, backgroundColor:C.indigo, borderRadius:5, maxBarThickness:14 },
+          { label:lb, data:t.bByHour, backgroundColor:C.grayBar, borderRadius:5, maxBarThickness:14 },
+        ]},
+        options: chartOpts(false, onChartClickTime),
+      });
+      $('timeCap').textContent = '시간대(0~23시)별 계약 건수 · 막대 클릭 시 해당 시간 상세';
+    }
+    $('timeTitle').textContent = '시간대별 계약 — ' + t.dayA + ' vs ' + t.dayB;
+  }
+
+  function chartOpts(isLine, onClick) {
+    const opts = {
+      responsive: true, maintainAspectRatio: false,
+      interaction: { mode: 'index', intersect: false },
+      plugins: {
+        legend: { position: 'top', align: 'end' },
+        tooltip: { callbacks: { label: (c) => c.dataset.label + ': ' + c.parsed.y + '건' } },
+      },
+      scales: {
+        x: { grid: { display: false }, ticks: { maxRotation: 0, autoSkip: true, maxTicksLimit: 12 } },
+        y: { beginAtZero: true, grid: { color: '#f0f2f8' }, ticks: { precision: 0 } },
+      },
+    };
+    if (onClick) opts.onClick = onClick;
+    return opts;
+  }
+
+  function buildDonut() {
+    if (!lastData) return;
+    const r = lastData.range;
+    const wc = r.contractTotal, wl = r.leadTotal;
+    const rest = Math.max(0, wl - wc);
+    if (chDonut) { chDonut.destroy(); chDonut = null; }
+    chDonut = new Chart($('chDonut').getContext('2d'), {
+      type: 'doughnut',
+      data: { labels:['기간 계약','미계약(접수)'], datasets:[{ data:[wc, rest], backgroundColor:[C.indigo, '#e5e9f2'], borderWidth:0, hoverOffset:4 }] },
+      options: { responsive:true, maintainAspectRatio:false, cutout:'72%', plugins:{ legend:{display:false}, tooltip:{ callbacks:{ label:(c)=>c.label+': '+c.parsed+'건' } } } },
+    });
+    $('donutPct').textContent = (r.rate===null?'–':pct(r.rate)+'%');
+    $('lg_wc').textContent = wc + '건'; $('lg_wl').textContent = wl + '건';
+    $('rngCap').textContent = r.start + ' ~ ' + r.end + ' · 계약 / 접수';
+  }
+
+  function buildDays() {
+    if (!lastData) return;
+    const r = lastData.range;
+    const labels = r.days.map((d) => d.slice(5)); // MM-DD
+    if (chDays) { chDays.destroy(); chDays = null; }
+    chDays = new Chart($('chDays').getContext('2d'), {
+      type: 'bar',
+      data: { labels, datasets:[
+        { label:'계약', data:r.contractByDay, backgroundColor:C.green, borderRadius:5, maxBarThickness:22 },
+        { label:'접수', data:r.leadByDay, backgroundColor:C.blue, borderRadius:5, maxBarThickness:22 },
+      ]},
+      options: chartOpts(false, onChartClickDays),
+    });
+    $('rg_contract').textContent = r.contractTotal;
+    $('rg_lead').textContent = r.leadTotal;
+    $('rg_rate').innerHTML = (r.rate===null?'–':pct(r.rate)) + '<span style="font-size:13px">%</span>';
+    $('daysCap').textContent = r.start + ' ~ ' + r.end + ' 일자별 · 막대 클릭 시 해당 일 상세';
+  }
+
+  function setDelta(el, diff, suffix) {
+    const cls = diff > 0 ? 'up' : (diff < 0 ? 'down' : 'flat');
+    const arrow = diff > 0 ? '▲' : (diff < 0 ? '▼' : '–');
+    el.className = 'delta ' + cls;
+    el.textContent = arrow + ' ' + (diff>0?'+':'') + diff + (suffix||'');
+  }
+
+  function renderAll(data) {
+    lastData = data;
+    const m = data.metrics, d = data.dates;
+
+    $('m_todayContract').textContent = m.todayContract;
+    $('m_yLead').textContent = m.yesterdayLeadIn;
+    $('m_yRate').textContent = pct(m.yesterdayRate);
+    $('m_r7').textContent = pct(m.rate7d);
+
+    // 오늘 vs 어제 같은 시간 페이스 (서버 계산)
+    const diff = m.todayContract - m.yesterdaySoFar;
+    setDelta($('d_today'), diff, '건 (어제 같은 시간 ' + m.yesterdaySoFar + '건)');
+
+    $('d_yLead').textContent = d.yesterday + ' 접수 · unqualified 제외';
+    $('d_yRate').textContent = '오늘 계약 ' + m.todayContract + ' / 어제 접수 ' + m.yesterdayLeadIn;
+    $('d_r7').textContent = '7일 계약 ' + m.contract7d + ' / 접수 ' + m.leadIn7d;
+
+    $('subInfo').textContent = '미소방문이사 (' + data.serviceId + ') · 접수=생성일, 계약=결제 일시 · unqualified 제외 · 스캔 ' + data.scanned + '건'
+      + (data.excludedUnqualified ? ' (제외 ' + data.excludedUnqualified + '건)' : '');
+
+    buildTimetable(); buildDonut(); buildDays();
+    renderTodayRows(data.todayItems);
+  }
+
+  function bindFirebaseSync() {
+    if (!window.firebaseSync) return;
+    window.firebaseSync.subscribeDashboard(serviceEl.value, (data) => {
+      applyingRemote = true;
+      renderAll(data);
+      setStatus('live', 'Firebase 동기화 · ' + fmt(data.generatedAt));
+      applyingRemote = false;
+    });
+  }
+
+  async function pushFirebase(data) {
+    if (applyingRemote || !window.firebaseSync) return;
+    try {
+      await window.firebaseSync.publishDashboard(serviceEl.value, data);
+    } catch (_) { /* Firebase 미연결 시 로컬 대시보드는 계속 동작 */ }
+  }
+
+  async function load(force) {
+    if (loading) return;
+    const user = userEl.value.trim(), pw = pwEl.value;
+    if (!user || !pw) { setStatus('error','로그인 정보를 입력하세요'); showError('아이디와 비밀번호를 입력해야 데이터를 불러올 수 있습니다.'); toggleSettings(true); return; }
+    localStorage.setItem('miso_user', user); localStorage.setItem('miso_pw', pw); localStorage.setItem('miso_service', serviceEl.value);
+    localStorage.setItem('miso_api_base', apiBaseEl.value.trim());
+    loading = true; setStatus('loading','갱신 중…'); clearError();
+    try {
+      if (force) await fetch(apiUrl('/api/clear-cache'));
+      const qs = new URLSearchParams({
+        serviceId: serviceEl.value,
+        dayA: $('dayA').value, dayB: $('dayB').value,
+        rangeStart: $('rangeStart').value, rangeEnd: $('rangeEnd').value,
+      });
+      const res = await fetch(apiUrl('/api/dashboard?') + qs.toString(), { headers:{ 'x-miso-user':user, 'x-miso-pass':pw } });
+      const data = await parseJsonResponse(res);
+      if (!res.ok) throw new Error(data.error || ('오류 '+res.status));
+      renderAll(data);
+      setStatus('live', '최근 갱신: ' + fmt(data.generatedAt));
+      pushFirebase(data);
+    } catch (e) {
+      setStatus('error','오류 발생');
+      showError(/로그인|인증|401/.test(e.message) ? ('로그인 실패: '+e.message+' (아이디/비밀번호를 확인하세요)') : ('데이터 조회 실패: '+e.message));
+    } finally { loading = false; scheduleNext(); }
+  }
+
+  function scheduleNext() {
+    if (timer) clearTimeout(timer); if (countdownTimer) clearInterval(countdownTimer);
+    const sec = Number(intervalEl.value); localStorage.setItem('miso_interval', String(sec));
+    if (!sec) return;
+    nextAt = Date.now() + sec*1000;
+    timer = setTimeout(() => load(false), sec*1000);
+    countdownTimer = setInterval(() => {
+      if (loading) return;
+      const left = Math.max(0, Math.round((nextAt-Date.now())/1000));
+      if (dot.className.includes('live')) statusText.textContent = '대기 중 · ' + left + '초 후 갱신';
+    }, 1000);
+  }
+
+  function toggleSettings(show) {
+    const open = typeof show==='boolean' ? show : !$('settings').classList.contains('open');
+    $('settings').classList.toggle('open', open);
+  }
+  function setMode(mode) {
+    timeMode = mode;
+    $('tg_hourly').classList.toggle('on', mode==='hourly');
+    $('tg_cum').classList.toggle('on', mode==='cumulative');
+    buildTimetable();
+  }
+
+  // ---- 날짜 헬퍼 (Asia/Seoul) ----
+  function seoulYmd(date) {
+    return new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Seoul',year:'numeric',month:'2-digit',day:'2-digit'}).format(date||new Date());
+  }
+  function shiftYmd(ymd, days) {
+    const [y,mo,d] = ymd.split('-').map(Number);
+    const dt = new Date(Date.UTC(y, mo-1, d)); dt.setUTCDate(dt.getUTCDate()+days);
+    return dt.toISOString().slice(0,10);
+  }
+  function mondayIdx(ymd) {
+    const [y,mo,d] = ymd.split('-').map(Number);
+    return (new Date(Date.UTC(y, mo-1, d)).getUTCDay()+6)%7;
+  }
+
+  // 기간 컨트롤 초기값
+  const TODAY = seoulYmd();
+  $('dayA').value = TODAY;
+  $('dayB').value = shiftYmd(TODAY, -1);
+  $('rangeStart').value = shiftYmd(TODAY, -6);
+  $('rangeEnd').value = TODAY;
+
+  function applyRangePreset(kind) {
+    let start = TODAY, end = TODAY;
+    if (kind === '7') start = shiftYmd(TODAY, -6);
+    else if (kind === '30') start = shiftYmd(TODAY, -29);
+    else if (kind === 'week') start = shiftYmd(TODAY, -mondayIdx(TODAY));
+    else if (kind === 'month') start = TODAY.slice(0,8) + '01';
+    $('rangeStart').value = start; $('rangeEnd').value = end;
+    document.querySelectorAll('.preset[data-range]').forEach((b) => b.classList.toggle('on', b.dataset.range===kind));
+    load(false);
+  }
+
+  $('reloadBtn').onclick = () => load(false);
+  $('settingsBtn').onclick = () => toggleSettings();
+  $('apiLocalBtn').onclick = () => { apiBaseEl.value = 'http://localhost:4000'; };
+  $('applyBtn').onclick = () => { load(false); toggleSettings(false); bindFirebaseSync(); };
+  $('forceBtn').onclick = () => load(true);
+  $('tg_hourly').onclick = () => setMode('hourly');
+  $('tg_cum').onclick = () => setMode('cumulative');
+  $('dayA').onchange = () => load(false);
+  $('dayB').onchange = () => load(false);
+  $('ttToday').onclick = () => { $('dayA').value = TODAY; $('dayB').value = shiftYmd(TODAY,-1); load(false); };
+  $('rangeStart').onchange = () => { document.querySelectorAll('.preset[data-range]').forEach((b)=>b.classList.remove('on')); load(false); };
+  $('rangeEnd').onchange = () => { document.querySelectorAll('.preset[data-range]').forEach((b)=>b.classList.remove('on')); load(false); };
+  document.querySelectorAll('.preset[data-range]').forEach((b) => b.onclick = () => applyRangePreset(b.dataset.range));
+  intervalEl.onchange = scheduleNext;
+
+  // 시트: 클릭 매핑
+  document.querySelectorAll('.drillable').forEach((el) => {
+    el.addEventListener('click', (e) => {
+      if (e.target.closest('button, input, a, .toggle, select')) return;
+      openSheetFromEl(el);
+    });
+  });
+  $('sheetClose').onclick = closeSheet;
+  $('sheetOverlay').onclick = (e) => { if (e.target === $('sheetOverlay')) closeSheet(); };
+  $('sheetCsv').onclick = exportSheetCsv;
+  $('sheetSearch').oninput = () => {
+    clearTimeout(sheetTimer);
+    sheetTimer = setTimeout(() => { if (sheetState) fetchSheet(); }, 300);
+  };
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeSheet(); });
+
+  function startApp() {
+    if (appStarted) return;
+    appStarted = true;
+    bindFirebaseSync();
+    if (userEl.value && pwEl.value) load(false); else toggleSettings(true);
+  }
+  window.addEventListener('firebase-ready', startApp);
+  if (window.firebaseSync) startApp();
+</script>
+</body>
+</html>

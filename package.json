@@ -1,0 +1,23 @@
+{
+  "name": "miso-contract-dashboard",
+  "version": "1.0.0",
+  "description": "미소방문이사(586) confirming 주문의 오늘 계약(결제 일시 기준) 실시간 집계 대시보드",
+  "private": true,
+  "scripts": {
+    "start": "node server.js",
+    "firebase": "firebase",
+    "build:hosting": "mkdir -p public && cp index.html miso-logo.svg firebase-sync.js public/ && node scripts/inject-config.js",
+    "build:functions": "cp server.js functions/api.js",
+    "deploy:hosting": "npm run build:hosting && firebase deploy --only hosting:mvc-contract-cdb96",
+    "deploy:functions": "firebase deploy --only functions:api",
+    "deploy:api": "npm run build:functions && firebase deploy --only functions:api",
+    "deploy:all": "npm run build:hosting && npm run build:functions && firebase deploy --only functions:api,hosting:mvc-contract-cdb96,firestore:rules",
+    "deploy:firestore": "firebase deploy --only firestore:rules"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "devDependencies": {
+    "firebase-tools": "^15.22.0"
+  }
+}

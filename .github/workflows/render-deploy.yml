@@ -1,0 +1,19 @@
+# GitHub Actions — Render 자동 배포 (선택)
+# Secrets: RENDER_DEPLOY_HOOK (Render 대시보드 → Service → Deploy Hook URL)
+name: Deploy API to Render
+
+on:
+  push:
+    branches: [main, master]
+    paths:
+      - 'server.js'
+      - 'package.json'
+      - 'render.yaml'
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger Render deploy
+        if: ${{ secrets.RENDER_DEPLOY_HOOK != '' }}
+        run: curl -fsS -X POST "${{ secrets.RENDER_DEPLOY_HOOK }}"

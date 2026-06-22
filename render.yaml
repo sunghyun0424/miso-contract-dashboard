@@ -1,0 +1,17 @@
+# Render 배포 (팀 공유용 API)
+# https://dashboard.render.com → New Web Service → GitHub 저장소 연결
+# 서비스 이름: miso-contract-api (URL: https://miso-contract-api.onrender.com)
+services:
+  - type: web
+    name: miso-contract-api
+    runtime: node
+    plan: free
+    region: singapore
+    buildCommand: npm install
+    startCommand: npm start
+    healthCheckPath: /api/health
+    envVars:
+      - key: NODE_VERSION
+        value: "20"
+      - key: API_ONLY
+        value: "1"
