@@ -3,6 +3,7 @@
 const http = require('http');
 const fs = require('fs');
 const path = require('path');
+const metrics = require('./metrics.js');
 
 // ----------------------------------------------------------------------------
 // 설정
@@ -40,17 +41,13 @@ const PAID_STATUSES = ['confirming', 'complete'];
 // 지표에서 제외할 주문 상태 (접수·계약·전환율 모두 제외)
 const EXCLUDED_STATUSES = ['unqualified'];
 
-// 결제 시각은 한 번 확정되면 거의 바뀌지 않으므로 프로세스 메모리에 캐싱한다.
-// key: requestId -> { paymentAt: string|null, fetchedAt: number }
-const paymentCache = new Map();
+// 주문 ID별 결제 시각 캐시 (기준일 변경·재갱신 시 재사용)
+// key: `${serviceId}:${requestId}` -> { paymentAt, fetchedAt }
+const orderCache = new Map();
+const ORDER_CACHE_TTL_MS = Number(process.env.ORDER_CACHE_TTL_MS || 10 * 60 * 1000);
 
 // 로그인으로 발급받은 토큰을 메모리에 캐싱한다. (계정별)
 let tokenState = { token: null, key: null };
-
-// 대시보드 집계 결과 캐시 (시트 API lazy load용)
-// key -> { qualified, context, generatedAt, fetchedAt }
-const dataCache = new Map();
-const DATA_CACHE_TTL_MS = Number(process.env.DATA_CACHE_TTL_MS || 5 * 60 * 1000);
 
 // ----------------------------------------------------------------------------
 // 유틸
@@ -228,11 +225,26 @@ async function fetchRequestsInWindow(token, serviceId, fetchStart) {
   return collected;
 }
 
-// 단일 주문의 "최신 성공 결제 시각" 조회 (캐시 활용)
-async function fetchPaymentAt(token, requestId) {
-  if (paymentCache.has(requestId)) {
-    return paymentCache.get(requestId).paymentAt;
+function orderCacheKey(serviceId, requestId) {
+  return serviceId + ':' + requestId;
+}
+
+function getOrderCacheEntry(serviceId, requestId) {
+  const key = orderCacheKey(serviceId, requestId);
+  const entry = orderCache.get(key);
+  if (!entry) return null;
+  if (Date.now() - entry.fetchedAt > ORDER_CACHE_TTL_MS) {
+    orderCache.delete(key);
+    return null;
   }
+  return entry;
+}
+
+// 단일 주문의 "최신 성공 결제 시각" 조회 (주문 ID 캐시, TTL 10분)
+async function fetchPaymentAt(token, serviceId, requestId) {
+  const cached = getOrderCacheEntry(serviceId, requestId);
+  if (cached) return cached.paymentAt;
+
   const qs = new URLSearchParams();
   qs.set('contextType', 'request');
   qs.set('contextId', String(requestId));
@@ -242,7 +254,6 @@ async function fetchPaymentAt(token, requestId) {
   try {
     const data = await apiGet(PAYMENTS_URL + '?' + qs.toString(), token);
     const rows = (data && (data.rows || data.data || (Array.isArray(data) ? data : []))) || [];
-    // 성공한 'payment' 거래 중 가장 최신 timestamp
     let latest = null;
     for (const r of rows) {
       if (r && r.paymentType === 'payment' && r.success && r.timestamp) {
@@ -252,15 +263,21 @@ async function fetchPaymentAt(token, requestId) {
     }
     paymentAt = latest ? latest.raw : null;
   } catch (e) {
-    // 인증 만료는 상위에서 재로그인하도록 전파한다.
     if (e.status === 401) throw e;
-    // 그 외 개별 결제 조회 실패는 전체를 막지 않는다.
     return null;
   }
-  paymentCache.set(requestId, { paymentAt, fetchedAt: Date.now() });
+  orderCache.set(orderCacheKey(serviceId, requestId), { paymentAt, fetchedAt: Date.now() });
   return paymentAt;
 }
 
+function resolveOpts(opts) {
+  return metrics.resolveOpts(opts, {
+    lookbackDays: LOOKBACK_DAYS,
+    paymentLagDays: PAYMENT_LAG_DAYS,
+  });
+}
+
+// resolveOpts 본문은 metrics.js — 아래 minYmd 등은 시트/필터용
 function minYmd(...dates) {
   const valid = dates.filter((d) => d && /^\d{4}-\d{2}-\d{2}$/.test(d));
   return valid.reduce((a, b) => (a < b ? a : b));
@@ -275,40 +292,7 @@ function clampYmd(v, fallback) {
   return /^\d{4}-\d{2}-\d{2}$/.test(v || '') ? v : fallback;
 }
 
-// 대시보드·시트에 필요한 접수/결제 기준일 윈도우 (586 등 서비스 공통)
-function resolveOpts(opts) {
-  opts = opts || {};
-  const today = todaySeoul();
-  const yesterday = shiftDate(today, -1);
-  const sevenStart = shiftDate(today, -6);
-  const weekStart = shiftDate(today, -mondayIndex(today));
-  const weekEnd = shiftDate(weekStart, 6);
-  const dayA = clampYmd(opts.dayA, today);
-  const dayB = clampYmd(opts.dayB, yesterday);
-  let rangeStart = clampYmd(opts.rangeStart, sevenStart);
-  let rangeEnd = clampYmd(opts.rangeEnd, today);
-  if (rangeStart > rangeEnd) { const t = rangeStart; rangeStart = rangeEnd; rangeEnd = t; }
-
-  // 접수(lead-in) 지표에 필요한 최소 접수일
-  const leadStart = minYmd(sevenStart, weekStart, yesterday, dayB, rangeStart);
-  // 결제(contract) 지표에 필요한 결제일 범위
-  const paymentStart = minYmd(today, yesterday, dayA, dayB, rangeStart, sevenStart, weekStart);
-  const paymentEnd = maxYmd(today, dayA, dayB, rangeEnd, weekEnd);
-
-  // 주문 목록(created_at desc): 접수·결제 지표를 커버하는 접수일 하한만 스캔
-  // 결제는 접수 후 발생 → paymentStart 이전 PAYMENT_LAG_DAYS 만큼 접수분 추가 포함
-  const neededStart = minYmd(leadStart, shiftDate(paymentStart, -PAYMENT_LAG_DAYS));
-  const lookbackCap = shiftDate(today, -LOOKBACK_DAYS);
-  const fetchStart = maxYmd(neededStart, lookbackCap);
-
-  return {
-    today, yesterday, sevenStart, weekStart, weekEnd,
-    dayA, dayB, rangeStart, rangeEnd,
-    leadStart, paymentStart, paymentEnd, fetchStart,
-  };
-}
-
-// confirming/complete 만 결제 API 호출. 접수일이 결제 관심 구간 밖이면 스킵.
+// 대시보드·시트에 필요한 접수/결제 기준일 윈도우 → metrics.resolveOpts
 function shouldFetchPayment(req, ctx) {
   if (!PAID_STATUSES.includes(req.status)) return false;
   const createdYmd = toSeoulDate(req.created_at);
@@ -316,10 +300,6 @@ function shouldFetchPayment(req, ctx) {
   // 결제일 ≥ 접수일 → 접수일이 paymentEnd 보다 늦으면 해당 결제 구간에 기여 불가
   if (createdYmd > ctx.paymentEnd) return false;
   return true;
-}
-
-function cacheKey(serviceId, ctx) {
-  return [serviceId, ctx.dayA, ctx.dayB, ctx.rangeStart, ctx.rangeEnd].join('|');
 }
 
 function toSheetRow(o) {
@@ -353,23 +333,24 @@ function sortOrders(rows, field, dir) {
 
 async function loadQualifiedData(token, serviceId, opts) {
   const ctx = resolveOpts(opts);
-  const key = cacheKey(serviceId, ctx);
-  const cached = dataCache.get(key);
-  if (cached && Date.now() - cached.fetchedAt < DATA_CACHE_TTL_MS) {
-    return cached;
-  }
 
   const rows = await fetchRequestsInWindow(token, serviceId, ctx.fetchStart);
-  console.log('[load] serviceId=%s fetchStart=%s leadStart=%s payment=%s..%s requests=%d',
-    serviceId, ctx.fetchStart, ctx.leadStart, ctx.paymentStart, ctx.paymentEnd, rows.length);
   let paymentSkipped = 0;
+  let paymentCacheHits = 0;
+  let paymentFetched = 0;
   const enriched = await mapWithConcurrency(rows, CONCURRENCY, async (req) => {
     const createdYmd = toSeoulDate(req.created_at);
     let paymentAt = null;
     if (shouldFetchPayment(req, ctx)) {
-      paymentAt = await fetchPaymentAt(token, req.id);
+      const hadCache = !!getOrderCacheEntry(serviceId, req.id);
+      paymentAt = await fetchPaymentAt(token, serviceId, req.id);
+      if (hadCache) paymentCacheHits += 1;
+      else paymentFetched += 1;
     } else if (PAID_STATUSES.includes(req.status)) {
       paymentSkipped += 1;
+      // 결제 조회 스킵 구간이어도 캐시에 있으면 집계에 활용
+      const cached = getOrderCacheEntry(serviceId, req.id);
+      if (cached) paymentAt = cached.paymentAt;
     }
     return {
       id: req.id,
@@ -384,16 +365,17 @@ async function loadQualifiedData(token, serviceId, opts) {
     };
   });
   const qualified = enriched.filter((o) => !EXCLUDED_STATUSES.includes(o.status));
-  const payload = {
+  console.log('[load] serviceId=%s fetchStart=%s requests=%d payment fetch=%d cacheHit=%d skip=%d',
+    serviceId, ctx.fetchStart, rows.length, paymentFetched, paymentCacheHits, paymentSkipped);
+  return {
     qualified,
     context: ctx,
     excludedUnqualified: enriched.length - qualified.length,
     paymentSkipped,
+    paymentCacheHits,
+    paymentFetched,
     generatedAt: new Date().toISOString(),
-    fetchedAt: Date.now(),
   };
-  dataCache.set(key, payload);
-  return payload;
 }
 
 function buildSheet(type, data, params) {
@@ -608,105 +590,17 @@ function buildSheet(type, data, params) {
 async function computeMetrics(token, serviceId, opts) {
   const data = await loadQualifiedData(token, serviceId, opts);
   const { qualified, context: ctx, excludedUnqualified, generatedAt } = data;
-  const { today, yesterday, sevenStart, weekStart, weekEnd, dayA, dayB, rangeStart, rangeEnd } = ctx;
-
-  // 계약(contract) = 결제 일시 기준
-  const todayContract = qualified.filter((o) => o.paymentYmd === today);
-  const contract7d = qualified.filter((o) => inRange(o.paymentYmd, sevenStart, today));
-  const weeklyContract = qualified.filter((o) => inRange(o.paymentYmd, weekStart, weekEnd));
-
-  // 접수(lead-in) = created_at 기준 (unqualified 제외)
-  const yesterdayLeads = qualified.filter((o) => o.createdYmd === yesterday);
-  const leads7d = qualified.filter((o) => inRange(o.createdYmd, sevenStart, today));
-  const weeklyLeads = qualified.filter((o) => inRange(o.createdYmd, weekStart, weekEnd));
-
-  const yesterdayContract = qualified.filter((o) => o.paymentYmd === yesterday);
-
-  todayContract.sort((a, b) => new Date(b.paymentAt) - new Date(a.paymentAt));
-
-  // 전환율(flow) = 기간 계약수 / 기간(또는 기준) 접수수
-  const rate = (num, den) => (den ? num / den : null);
-  const cumulative = (arr) => {
-    let s = 0;
-    return arr.map((v) => (s += v));
-  };
-
-  // 시간대별(0~23시) 계약 건수 — 기준일(dayA) vs 비교일(dayB)
-  const aByHour = new Array(24).fill(0);
-  const bByHour = new Array(24).fill(0);
-  for (const o of qualified) {
-    if (!o.paymentAt) continue;
-    const h = toSeoulHour(o.paymentAt);
-    if (h === null) continue;
-    if (o.paymentYmd === dayA) aByHour[h] += 1;
-    if (o.paymentYmd === dayB) bByHour[h] += 1;
-  }
-  const aTotal = qualified.filter((o) => o.paymentYmd === dayA).length;
-  const bTotal = qualified.filter((o) => o.paymentYmd === dayB).length;
-
-  // 지정 기간 일자별 계약/접수
-  const days = [];
-  const contractByDay = [];
-  const leadByDay = [];
-  for (let d = rangeStart; d <= rangeEnd; d = shiftDate(d, 1)) {
-    days.push(d);
-    contractByDay.push(qualified.filter((o) => o.paymentYmd === d).length);
-    leadByDay.push(qualified.filter((o) => o.createdYmd === d).length);
-    if (days.length > 370) break; // 안전장치
-  }
-  const rangeContract = contractByDay.reduce((a, b) => a + b, 0);
-  const rangeLead = leadByDay.reduce((a, b) => a + b, 0);
-
-  // 페이스 비교: 어제 같은 시각(현재 시)까지의 누적 계약수
-  const nowHour = toSeoulHour(new Date());
-  let yesterdaySoFar = 0;
-  for (const o of qualified) {
-    if (o.paymentYmd !== yesterday) continue;
-    const h = toSeoulHour(o.paymentAt);
-    if (h !== null && h <= nowHour) yesterdaySoFar += 1;
-  }
-
-  const excludedUnqualifiedCount = excludedUnqualified;
-
-  return {
-    serviceId,
+  const dashboard = metrics.buildDashboardFromOrders(qualified, ctx, serviceId, {
+    excludedUnqualified,
     generatedAt,
-    dates: { today, yesterday, sevenStart, weekStart, weekEnd },
-    scanned: qualified.length,
-    excludedUnqualified: excludedUnqualifiedCount,
     lookbackDays: LOOKBACK_DAYS,
-    metrics: {
-      todayContract: todayContract.length,
-      yesterdayContract: yesterdayContract.length,
-      yesterdaySoFar,
-      yesterdayLeadIn: yesterdayLeads.length,
-      yesterdayRate: rate(todayContract.length, yesterdayLeads.length),
-      contract7d: contract7d.length,
-      leadIn7d: leads7d.length,
-      rate7d: rate(contract7d.length, leads7d.length),
-      weeklyContract: weeklyContract.length,
-      weeklyLeads: weeklyLeads.length,
-      weeklyRate: rate(weeklyContract.length, weeklyLeads.length),
-    },
-    timetable: {
-      dayA, dayB,
-      hours: Array.from({ length: 24 }, (_, i) => i),
-      aByHour, bByHour,
-      aCumulative: cumulative(aByHour),
-      bCumulative: cumulative(bByHour),
-      aTotal, bTotal,
-    },
-    range: {
-      start: rangeStart, end: rangeEnd,
-      days, contractByDay, leadByDay,
-      contractTotal: rangeContract,
-      leadTotal: rangeLead,
-      rate: rate(rangeContract, rangeLead),
-    },
-    todayItems: todayContract.map((o) => ({
-      id: o.id, phone: o.phone, region: o.region, due_date: o.due_date, paymentAt: o.paymentAt,
-    })),
-  };
+  });
+  dashboard.orders = qualified.map((o) => ({
+    id: o.id, status: o.status, phone: o.phone, region: o.region,
+    due_date: o.due_date, created_at: o.created_at, createdYmd: o.createdYmd,
+    paymentAt: o.paymentAt, paymentYmd: o.paymentYmd,
+  }));
+  return dashboard;
 }
 
 // 토큰 확보 + 401 시 1회 재로그인 후 재시도
@@ -716,8 +610,7 @@ async function computeMetricsWithAuth(auth, serviceId, opts) {
     return await computeMetrics(token, serviceId, opts);
   } catch (e) {
     if (e.status === 401 && auth.mode === 'login') {
-      paymentCache.clear();
-      dataCache.clear();
+      orderCache.clear();
       token = await getToken(auth, true);
       return await computeMetrics(token, serviceId, opts);
     }
@@ -741,8 +634,7 @@ async function getSheetWithAuth(auth, serviceId, opts, sheetOpts) {
     return sheet;
   } catch (e) {
     if (e.status === 401 && auth.mode === 'login') {
-      paymentCache.clear();
-      dataCache.clear();
+      orderCache.clear();
       token = await getToken(auth, true);
       const data = await loadQualifiedData(token, serviceId, opts);
       let sheet = buildSheet(sheetOpts.type, data, sheetOpts);
@@ -784,15 +676,42 @@ function sendJson(res, status, obj) {
 }
 
 async function handleApiRequest(req, res) {
+  const url = new URL(req.url, 'http://localhost');
+
+  if (url.pathname === '/api/payment-transactions') {
+    if (req.method === 'OPTIONS') {
+      res.writeHead(204, {
+        'Access-Control-Allow-Origin': '*',
+        'Access-Control-Allow-Headers': 'Authorization, Content-Type',
+        'Access-Control-Allow-Methods': 'GET, OPTIONS',
+      });
+      return res.end();
+    }
+    const auth = req.headers.authorization;
+    if (!auth) return sendJson(res, 401, { error: 'Authorization header required' });
+    const upstream = PAYMENTS_URL + (url.search || '');
+    try {
+      const r = await fetch(upstream, { headers: { Authorization: auth } });
+      const text = await r.text();
+      res.writeHead(r.status, {
+        'Content-Type': r.headers.get('content-type') || 'application/json',
+        'Access-Control-Allow-Origin': '*',
+        'Cache-Control': 'no-store',
+      });
+      return res.end(text);
+    } catch (e) {
+      return sendJson(res, 502, { error: e.message || 'Upstream error' });
+    }
+  }
+
   if (req.method === 'OPTIONS') {
     res.writeHead(204, {
       'Access-Control-Allow-Origin': '*',
-      'Access-Control-Allow-Headers': 'Content-Type, x-miso-user, x-miso-pass',
+      'Access-Control-Allow-Headers': 'Content-Type, x-miso-user, x-miso-pass, Authorization',
       'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
     });
     return res.end();
   }
-  const url = new URL(req.url, 'http://localhost');
 
   if (url.pathname === '/api/health') {
     return sendJson(res, 200, { ok: true, ts: new Date().toISOString() });
@@ -823,8 +742,7 @@ async function handleApiRequest(req, res) {
   }
 
   if (url.pathname === '/api/clear-cache') {
-    paymentCache.clear();
-    dataCache.clear();
+    orderCache.clear();
     return sendJson(res, 200, { ok: true });
   }
 
@@ -892,8 +810,14 @@ if (require.main === module) {
         '.svg': 'image/svg+xml',
         '.png': 'image/png',
         '.ico': 'image/x-icon',
+        '.webmanifest': 'application/manifest+json',
       };
-      res.writeHead(200, { 'Content-Type': types[ext] || 'application/octet-stream' });
+      const headers = { 'Content-Type': types[ext] || 'application/octet-stream' };
+      if (path.basename(filePath) === 'sw.js') {
+        headers['Cache-Control'] = 'no-cache';
+        headers['Service-Worker-Allowed'] = '/';
+      }
+      res.writeHead(200, headers);
       res.end(content);
     });
   });

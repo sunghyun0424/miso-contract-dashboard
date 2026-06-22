@@ -3,8 +3,13 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<meta name="theme-color" content="#6366f1" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-title" content="계약 대시보드" />
+<link rel="manifest" href="/manifest.webmanifest" />
 <title>실시간 계약 대시보드 · 미소방문이사</title>
 <link rel="icon" type="image/svg+xml" href="/miso-logo.svg" />
+<link rel="apple-touch-icon" href="/miso-logo.svg" />
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
@@ -215,14 +220,10 @@
       <div class="field"><label for="interval">자동 새로고침</label>
         <select id="interval"><option value="60">1분</option><option value="300">5분</option><option value="0">수동</option></select>
       </div>
-      <div class="field" id="apiBaseField"><label for="apiBase">API 서버</label>
-        <input id="apiBase" type="url" placeholder="로컬 개발용 (비워두면 Render API)" style="width:220px" />
-        <button type="button" class="btn ghost" id="apiLocalBtn" style="margin-left:6px">이 PC</button>
-      </div>
       <button class="btn" id="applyBtn">적용</button>
       <button class="btn ghost" id="forceBtn" title="결제 캐시 비우고 전체 재조회">강제 재조회</button>
-      <div class="help"><code>rfq-admin.miso.kr</code> 백오피스 계정으로 로그인합니다. 계정 정보는 이 브라우저에만 저장됩니다.<br>
-        팀 공유 URL: <a href="https://mvc-contract-cdb96.web.app" target="_blank" rel="noopener">mvc-contract-cdb96.web.app</a></div>
+      <div class="help"><code>rfq.getmiso.com</code> 직접 조회 · 결제만 Render 프록시 · IndexedDB 로컬 저장<br>
+        로컬: <code>npm start</code> → localhost:4000 · 배포: <a href="https://mvc-contract-cdb96.web.app" target="_blank" rel="noopener">mvc-contract-cdb96.web.app</a></div>
     </div>
 
     <div id="err" class="err"></div>
@@ -357,41 +358,48 @@
   </div>
 </div>
 
-<script>window.DASHBOARD_API_BASE = '';</script>
+<script src="metrics.js"></script>
 <script type="module">
   import { publishDashboard, subscribeDashboard } from './firebase-sync.js';
+  import { OrderStore, SyncState } from './idb-sync.js';
+  import { MisoClient } from './miso-api.js';
+  import { buildSheet, sortOrders } from './miso-sheets.js';
+  window.misoMetrics = globalThis.MisoMetrics;
+  window.misoSyncState = SyncState;
+  window.misoSheets = { buildSheet, sortOrders };
+  window.getOrderStore = (sid) => {
+    if (!window._orderStore || window._orderStore.serviceId !== String(sid)) {
+      window._orderStore = new OrderStore(sid);
+    }
+    return window._orderStore;
+  };
+  window.getMisoClient = (user, pass, sid) => {
+    const key = user + ':' + sid;
+    if (!window._misoClient || window._misoClientKey !== key) {
+      window._misoClient = new MisoClient(user, pass, sid);
+      window._misoClientKey = key;
+    } else {
+      window._misoClient.username = user;
+      window._misoClient.password = pass;
+      window._misoClient.serviceId = Number(sid) || 586;
+    }
+    return window._misoClient;
+  };
   window.firebaseSync = { publishDashboard, subscribeDashboard };
   window.dispatchEvent(new Event('firebase-ready'));
+  window.dispatchEvent(new Event('idb-ready'));
 </script>
 <script>
   const $ = (id) => document.getElementById(id);
-  const userEl = $('userId'), pwEl = $('userPw'), serviceEl = $('serviceId'), intervalEl = $('interval'), apiBaseEl = $('apiBase');
-  function isLocalApiUrl(url) {
-    return /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?\/?$/i.test(url || '');
-  }
-  const onLocalPage = /^(localhost|127\.0\.0\.1)$/i.test(location.hostname);
-  if (!onLocalPage) {
-    const storedApi = localStorage.getItem('miso_api_base') || '';
-    if (isLocalApiUrl(storedApi)) localStorage.removeItem('miso_api_base');
-    $('apiBaseField').style.display = 'none';
-  }
-  function getApiBase() {
-    const configBase = (window.DASHBOARD_API_BASE || '').replace(/\/$/, '');
-    const stored = (localStorage.getItem('miso_api_base') || '').replace(/\/$/, '');
-    if (stored && !(isLocalApiUrl(stored) && !onLocalPage)) return stored;
-    return configBase;
-  }
-  function apiUrl(path) { return getApiBase() + path; }
+  const userEl = $('userId'), pwEl = $('userPw'), serviceEl = $('serviceId'), intervalEl = $('interval');
   const dot = $('dot'), statusText = $('statusText'), errBox = $('err');
 
   userEl.value = localStorage.getItem('miso_user') || '';
   pwEl.value = localStorage.getItem('miso_pw') || '';
   serviceEl.value = localStorage.getItem('miso_service') || '586';
-  intervalEl.value = localStorage.getItem('miso_interval') || '60';
-  apiBaseEl.value = localStorage.getItem('miso_api_base') ?? (window.DASHBOARD_API_BASE || '');
-  if (!apiBaseEl.value && getApiBase()) apiBaseEl.placeholder = getApiBase();
+  intervalEl.value = localStorage.getItem('miso_interval') || '300';
 
-  let timer = null, countdownTimer = null, nextAt = 0, loading = false;
+  let timer = null, countdownTimer = null, nextAt = 0, loading = false, refreshing = false;
   let lastData = null, timeMode = 'hourly';
   let chTime = null, chDonut = null, chDays = null;
   let applyingRemote = false;
@@ -414,20 +422,6 @@
   function fmtFull(ts) {
     if (!ts) return '–'; const d = new Date(ts); if (isNaN(d)) return '–';
     return new Intl.DateTimeFormat('ko-KR',{timeZone:'Asia/Seoul',year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',second:'2-digit',hour12:false}).format(d);
-  }
-  function authHeaders() {
-    return { 'x-miso-user': userEl.value.trim(), 'x-miso-pass': pwEl.value };
-  }
-  async function parseJsonResponse(res) {
-    const text = await res.text();
-    try {
-      return JSON.parse(text);
-    } catch (_) {
-      if (/^\s*</.test(text)) {
-        throw new Error('API 서버 응답이 없습니다. 설정에서 API 서버를 확인하세요.');
-      }
-      throw new Error('잘못된 API 응답 형식');
-    }
   }
   function dashParams() {
     return {
@@ -502,20 +496,40 @@
     });
   }
 
+  async function getSheetQualified() {
+    const client = window.getMisoClient(userEl.value.trim(), pwEl.value, serviceEl.value);
+    if (client.lastQualified?.length) return client.lastQualified;
+    if (!window.getOrderStore) return null;
+    const store = window.getOrderStore(serviceEl.value);
+    const cached = await store.hydrateFresh();
+    if (!cached.length) return null;
+    client.seedPaymentCacheFromOrders(cached);
+    return client.setQualifiedFromOrders(cached, dashParams());
+  }
+
   async function fetchSheet() {
     if (!sheetState) return;
     $('sheetBody').innerHTML = '<tr><td colspan="8" class="empty">로딩 중…</td></tr>';
-    const p = dashParams();
-    const qs = new URLSearchParams({ ...p, type: sheetState.type });
-    if (sheetState.day) qs.set('day', sheetState.day);
-    if (sheetState.hour !== null && sheetState.hour !== '') qs.set('hour', sheetState.hour);
-    if (sheetState.sort) { qs.set('sort', sheetState.sort); qs.set('dir', sheetState.dir); }
-    const q = $('sheetSearch').value.trim();
-    if (q) qs.set('q', q);
     try {
-      const res = await fetch(apiUrl('/api/sheet?') + qs.toString(), { headers: authHeaders() });
-      const data = await parseJsonResponse(res);
-      if (!res.ok) throw new Error(data.error || ('오류 ' + res.status));
+      const qualified = await getSheetQualified();
+      if (!qualified) {
+        $('sheetBody').innerHTML = '<tr><td colspan="8" class="empty">데이터가 없습니다. 먼저 갱신하세요.</td></tr>';
+        return;
+      }
+      const ctx = window.misoMetrics.resolveOpts(dashParams());
+      let data = window.misoSheets.buildSheet(sheetState.type, { qualified, context: ctx }, {
+        day: sheetState.day,
+        hour: sheetState.hour,
+      });
+      if (sheetState.sort) data.rows = window.misoSheets.sortOrders(data.rows, sheetState.sort, sheetState.dir || 'asc');
+      const q = $('sheetSearch').value.trim();
+      if (q) {
+        const ql = q.toLowerCase();
+        data.rows = data.rows.filter((r) =>
+          Object.values(r).some((v) => v != null && String(v).toLowerCase().includes(ql))
+        );
+        data.filtered = data.rows.length;
+      }
       sheetData = data;
       renderSheetTable(data);
     } catch (e) {
@@ -748,16 +762,6 @@
   function stopLoadTimer() {
     if (loadTickTimer) { clearInterval(loadTickTimer); loadTickTimer = null; }
   }
-  async function fetchWithTimeout(url, options, ms) {
-    const ctrl = new AbortController();
-    const id = setTimeout(() => ctrl.abort(), ms);
-    try {
-      return await fetch(url, { ...options, signal: ctrl.signal });
-    } catch (e) {
-      if (e.name === 'AbortError') throw new Error('요청 시간 초과(5분). 새로고침 후 다시 시도하세요. 두 번째는 캐시로 더 빠릅니다.');
-      throw e;
-    } finally { clearTimeout(id); }
-  }
   async function pushFirebase(data) {
     if (applyingRemote || !window.firebaseSync) return;
     try {
@@ -765,38 +769,99 @@
     } catch (_) { /* Firebase 미연결 시 로컬 대시보드는 계속 동작 */ }
   }
 
-  async function load(force) {
-    if (loading) return;
+  async function hydrateFromIdb() {
+    if (!window.misoMetrics || !window.getOrderStore) return false;
+    const store = window.getOrderStore(serviceEl.value);
+    const cached = await store.hydrateFresh();
+    if (!cached.length) return false;
+    const user = userEl.value.trim(), pw = pwEl.value;
+    if (user && pw && window.getMisoClient) {
+      const client = window.getMisoClient(user, pw, serviceEl.value);
+      client.seedPaymentCacheFromOrders(cached);
+      client.setQualifiedFromOrders(cached, dashParams());
+    }
+    const ctx = window.misoMetrics.resolveOpts(dashParams());
+    const data = window.misoMetrics.buildDashboardFromOrders(
+      window.misoMetrics.filterQualified(cached), ctx, serviceEl.value,
+      { fromCache: true, generatedAt: new Date().toISOString() }
+    );
+    renderAll(data);
+    setStatus('live', '로컬 캐시 · ' + fmt(data.generatedAt));
+    return true;
+  }
+
+  async function recomputeFromIdb() {
+    if (!window.misoMetrics || !window.getOrderStore) return false;
+    const store = window.getOrderStore(serviceEl.value);
+    const cached = await store.hydrateFresh();
+    if (!cached.length) return false;
+    const user = userEl.value.trim(), pw = pwEl.value;
+    if (user && pw && window.getMisoClient) {
+      window.getMisoClient(user, pw, serviceEl.value).setQualifiedFromOrders(cached, dashParams());
+    }
+    const ctx = window.misoMetrics.resolveOpts(dashParams());
+    const data = window.misoMetrics.buildDashboardFromOrders(
+      window.misoMetrics.filterQualified(cached), ctx, serviceEl.value,
+      { fromCache: true, generatedAt: new Date().toISOString() }
+    );
+    renderAll(data);
+    setStatus('live', '로컬 재집계 · ' + fmt(data.generatedAt));
+    return true;
+  }
+
+  async function load(force, options = {}) {
+    if (refreshing) return;
     const user = userEl.value.trim(), pw = pwEl.value;
     if (!user || !pw) { setStatus('error','로그인 정보를 입력하세요'); showError('아이디와 비밀번호를 입력해야 데이터를 불러올 수 있습니다.'); toggleSettings(true); return; }
+    if (!window.getMisoClient) { showError('앱 모듈 로딩 중입니다. 잠시 후 다시 시도하세요.'); return; }
     localStorage.setItem('miso_user', user); localStorage.setItem('miso_pw', pw); localStorage.setItem('miso_service', serviceEl.value);
-    localStorage.setItem('miso_api_base', apiBaseEl.value.trim());
-    loading = true; setStatus('loading','갱신 중…'); clearError(); startLoadTimer();
+
+    if (!lastData && !force) await hydrateFromIdb();
+    const silent = options.silent ?? !!lastData;
+    const showLoading = !silent && !lastData;
+    if (loading && !showLoading) return;
+
+    if (showLoading) {
+      loading = true;
+      setStatus('loading', '갱신 중…');
+      clearError();
+      startLoadTimer();
+    } else {
+      refreshing = true;
+    }
+
+    const client = window.getMisoClient(user, pw, serviceEl.value);
     try {
-      if (force) await fetch(apiUrl('/api/clear-cache'));
-      const qs = new URLSearchParams({
-        serviceId: serviceEl.value,
-        dayA: $('dayA').value, dayB: $('dayB').value,
-        rangeStart: $('rangeStart').value, rangeEnd: $('rangeEnd').value,
-      });
-      const res = await fetchWithTimeout(
-        apiUrl('/api/dashboard?') + qs.toString(),
-        { headers:{ 'x-miso-user':user, 'x-miso-pass':pw } },
-        300000
-      );
-      const data = await parseJsonResponse(res);
-      if (!res.ok) throw new Error(data.error || ('오류 '+res.status));
+      if (force) {
+        client.clearPaymentCache();
+        client.token = null;
+        if (window.getOrderStore) await window.getOrderStore(serviceEl.value).clear();
+      }
+      const data = await client.syncDashboard(dashParams());
+      if (data.orders?.length && window.getOrderStore) {
+        await window.getOrderStore(serviceEl.value).mergeOrders(data.orders);
+      }
       renderAll(data);
-      setStatus('live', '최근 갱신: ' + fmt(data.generatedAt));
+      clearError();
+      setStatus('live', (data.fromCache ? '로컬+동기화 · ' : '최근 갱신: ') + fmt(data.generatedAt));
       pushFirebase(data);
     } catch (e) {
-      setStatus('error','오류 발생');
-      let msg = e.message || '';
-      if (/failed to fetch/i.test(msg)) {
-        msg = 'API 서버에 연결할 수 없습니다. 설정 → API 서버를 비우고 적용하세요. (자동: Render API 사용)';
+      if (lastData) {
+        setStatus('live', '갱신 실패 · ' + fmt(lastData.generatedAt) + ' 데이터 유지');
+      } else {
+        setStatus('error','오류 발생');
+        let msg = e.message || '';
+        if (/failed to fetch/i.test(msg)) {
+          msg = '미소 API에 연결할 수 없습니다. 네트워크·VPN을 확인하세요.';
+        }
+        showError(/로그인|인증|401/.test(e.message) ? ('로그인 실패: '+e.message+' (아이디/비밀번호를 확인하세요)') : ('데이터 조회 실패: '+msg));
       }
-      showError(/로그인|인증|401/.test(e.message) ? ('로그인 실패: '+e.message+' (아이디/비밀번호를 확인하세요)') : ('데이터 조회 실패: '+msg));
-    } finally { loading = false; stopLoadTimer(); scheduleNext(); }
+    } finally {
+      loading = false;
+      refreshing = false;
+      stopLoadTimer();
+      scheduleNext();
+    }
   }
 
   function scheduleNext() {
@@ -804,9 +869,9 @@
     const sec = Number(intervalEl.value); localStorage.setItem('miso_interval', String(sec));
     if (!sec) return;
     nextAt = Date.now() + sec*1000;
-    timer = setTimeout(() => load(false), sec*1000);
+    timer = setTimeout(() => load(false, { silent: true }), sec*1000);
     countdownTimer = setInterval(() => {
-      if (loading) return;
+      if (loading || refreshing) return;
       const left = Math.max(0, Math.round((nextAt-Date.now())/1000));
       if (dot.className.includes('live')) statusText.textContent = '대기 중 · ' + left + '초 후 갱신';
     }, 1000);
@@ -852,21 +917,20 @@
     else if (kind === 'month') start = TODAY.slice(0,8) + '01';
     $('rangeStart').value = start; $('rangeEnd').value = end;
     document.querySelectorAll('.preset[data-range]').forEach((b) => b.classList.toggle('on', b.dataset.range===kind));
-    load(false);
+    recomputeFromIdb().then((ok) => { if (!ok) load(false); });
   }
 
   $('reloadBtn').onclick = () => load(false);
   $('settingsBtn').onclick = () => toggleSettings();
-  $('apiLocalBtn').onclick = () => { apiBaseEl.value = 'http://localhost:4000'; };
   $('applyBtn').onclick = () => { load(false); toggleSettings(false); bindFirebaseSync(); };
   $('forceBtn').onclick = () => load(true);
   $('tg_hourly').onclick = () => setMode('hourly');
   $('tg_cum').onclick = () => setMode('cumulative');
-  $('dayA').onchange = () => load(false);
-  $('dayB').onchange = () => load(false);
-  $('ttToday').onclick = () => { $('dayA').value = TODAY; $('dayB').value = shiftYmd(TODAY,-1); load(false); };
-  $('rangeStart').onchange = () => { document.querySelectorAll('.preset[data-range]').forEach((b)=>b.classList.remove('on')); load(false); };
-  $('rangeEnd').onchange = () => { document.querySelectorAll('.preset[data-range]').forEach((b)=>b.classList.remove('on')); load(false); };
+  $('dayA').onchange = async () => { if (!(await recomputeFromIdb())) load(false); };
+  $('dayB').onchange = async () => { if (!(await recomputeFromIdb())) load(false); };
+  $('ttToday').onclick = async () => { $('dayA').value = TODAY; $('dayB').value = shiftYmd(TODAY,-1); if (!(await recomputeFromIdb())) load(false); };
+  $('rangeStart').onchange = async () => { document.querySelectorAll('.preset[data-range]').forEach((b)=>b.classList.remove('on')); if (!(await recomputeFromIdb())) load(false); };
+  $('rangeEnd').onchange = async () => { document.querySelectorAll('.preset[data-range]').forEach((b)=>b.classList.remove('on')); if (!(await recomputeFromIdb())) load(false); };
   document.querySelectorAll('.preset[data-range]').forEach((b) => b.onclick = () => applyRangePreset(b.dataset.range));
   intervalEl.onchange = scheduleNext;
 
@@ -895,5 +959,6 @@
   window.addEventListener('firebase-ready', startApp);
   if (window.firebaseSync) startApp();
 </script>
+<script src="/pwa-register.js"></script>
 </body>
 </html>

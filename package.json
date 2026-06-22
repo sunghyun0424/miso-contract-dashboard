@@ -5,8 +5,9 @@
   "private": true,
   "scripts": {
     "start": "node server.js",
+    "start:proxy": "node proxy-server.js",
     "firebase": "firebase",
-    "build:hosting": "mkdir -p public && cp index.html miso-logo.svg firebase-sync.js public/ && node scripts/inject-config.js",
+    "build:hosting": "mkdir -p public && cp index.html miso-logo.svg firebase-sync.js metrics.js miso-api.js miso-sheets.js idb-sync.js pwa-register.js sw.js manifest.webmanifest public/",
     "build:functions": "cp server.js functions/api.js",
     "deploy:hosting": "npm run build:hosting && firebase deploy --only hosting:mvc-contract-cdb96",
     "deploy:functions": "firebase deploy --only functions:api",

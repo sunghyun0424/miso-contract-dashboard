@@ -8,12 +8,8 @@ services:
     plan: free
     region: singapore
     buildCommand: npm install
-    startCommand: npm start
+    startCommand: node proxy-server.js
     healthCheckPath: /api/health
     envVars:
       - key: NODE_VERSION
         value: "20"
-      - key: API_ONLY
-        value: "1"
-      - key: CONCURRENCY
-        value: "10"

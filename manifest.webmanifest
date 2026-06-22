@@ -1,0 +1,20 @@
+{
+  "name": "실시간 계약 대시보드",
+  "short_name": "계약 대시보드",
+  "description": "미소방문이사(586) 실시간 계약·접수 대시보드",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#f3f5fb",
+  "theme_color": "#6366f1",
+  "lang": "ko",
+  "icons": [
+    {
+      "src": "/miso-logo.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    }
+  ]
+}

@@ -1,11 +1,12 @@
 const { onRequest } = require('firebase-functions/v2/https');
-const { handleApiRequest } = require('./api.js');
+const { proxyPayment } = require('./payment-proxy.js');
 
-exports.api = onRequest(
+/** 결제 API만 프록시 — api.getmiso.com은 rfq-admin.miso.kr CORS만 허용 */
+exports.paymentProxy = onRequest(
   {
     region: 'asia-northeast1',
-    timeoutSeconds: 300,
-    memory: '512MiB',
+    timeoutSeconds: 60,
+    memory: '256MiB',
   },
-  (req, res) => handleApiRequest(req, res)
+  proxyPayment
 );
