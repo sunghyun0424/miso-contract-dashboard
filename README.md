@@ -23,44 +23,46 @@
 > 전환율은 "해당 기간 계약수 ÷ 해당 기간 접수수"(flow) 입니다.
 > (단, 어제 전환율의 분자는 정의상 *오늘* 계약수를 사용합니다.)
 
-## 동작 방식
+## 동작 방식 (SPA + IndexedDB)
 
-- 로컬 Node 서버가 미소 백오피스 API를 중계(proxy)합니다. (브라우저 CORS 문제 회피)
-  - 주문 목록: `https://rfq.getmiso.com/backoffice/requests`
-  - 결제 내역: `https://api.getmiso.com/v3/backoffice/payment-transactions`
-- 미소 API에는 날짜 필터가 없어, **최근 N일(기본 45일) 접수 주문**을 최신순으로 스캔합니다.
-  (`LOOKBACK_DAYS` 환경변수로 조정. 접수→결제 지연을 감안한 여유 기간)
-- 결제가 존재할 수 있는 상태(`confirming`, `complete`)만 결제 내역을 조회해 부하를 줄입니다.
-- 결제 일시는 주문별로 메모리 캐싱하여 새로고침 부하를 최소화합니다.
+브라우저(SPA)가 미소 API를 직접 호출하고, 계산·저장을 모두 클라이언트에서 처리합니다.
+별도 백엔드 DB나 서버 계산이 없습니다.
 
-## 로컬 PC를 API 서버로 (Render 없이)
-
-**본인 PC만** 쓸 때 가장 간단한 방법입니다.
-
-### 방법 1 — 전부 로컬 (권장)
-
-```bash
-npm start
+```
+[브라우저 · Firebase Hosting의 index.html (SPA)]
+   ├─ 로그인 / 주문 목록 → rfq.getmiso.com           (직접 호출, CORS 허용)
+   ├─ 결제 내역         → Render 프록시 → api.getmiso.com  (CORS 우회용 프록시)
+   ├─ 지표 계산          → metrics.js · miso-sheets.js (클라이언트)
+   └─ 저장              → IndexedDB (브라우저 로컬 캐시, 10분 TTL)
 ```
 
-브라우저에서 **http://localhost:4000** 접속. API·화면 모두 이 PC에서 동작합니다.
+- `api.getmiso.com`(결제)만 CORS가 막혀 있어 **Render의 결제 전용 프록시**(`proxy-server.js`)를 경유합니다.
+  로그인·주문목록(`rfq.getmiso.com`)은 브라우저가 직접 호출합니다.
+- 미소 API에는 날짜 필터가 없어, **최근 N일(기본 45일) 접수 주문**을 최신순으로 스캔합니다.
+  (`miso-api.js`의 `LOOKBACK_DAYS`. 접수→결제 지연을 감안한 여유 기간)
+- 결제가 존재할 수 있는 상태(`confirming`, `complete`)만 결제 내역을 조회해 부하를 줄입니다.
+- 조회한 주문·결제는 **IndexedDB**에 저장(10분 TTL)하여 새로고침/탭 재방문 시 즉시 표시하고 재조회 부하를 줄입니다.
+- **저장은 브라우저별 로컬**입니다. Firestore 같은 서버 DB를 쓰지 않으므로 다른 사람/기기와 데이터가 공유되지 않고, 각자 로그인해 각자 조회·캐싱합니다.
 
-### 방법 2 — Firebase Hosting 화면 + 이 PC API
+## 로컬에서 실행 (배포 없이)
 
-1. 터미널에서 `npm start` 유지 (포트 4000)
-2. https://mvc-contract-cdb96.web.app 접속
-3. **설정** → **API 서버**에 `http://localhost:4000` 입력 (또는 「이 PC」 버튼) → **적용**
+```bash
+npm start            # server.js — SPA 화면 + 결제 프록시를 한 포트에서 제공
+```
 
-> HTTPS Hosting 페이지에서 HTTP localhost 호출은 브라우저/OS에 따라 차단될 수 있습니다.  
-> 막히면 **방법 1**을 쓰거나, `cloudflared tunnel --url http://localhost:4000` 으로 HTTPS 터널 URL을 API 서버에 넣으세요.
+브라우저에서 **http://localhost:4000** 접속.
+로그인·주문 목록은 `rfq.getmiso.com`을 직접 호출하고, 결제 내역은 이 **로컬 서버가 프록시**합니다. (Render 불필요)
+
+> 배포본(https://mvc-contract-cdb96.web.app)은 결제 프록시로 **Render**를 사용하므로, 로컬 서버가 꺼져 있어도 정상 동작합니다.
+> `npm start`(`server.js`)는 로컬 개발 편의용 올인원 서버이고, Render에는 결제 프록시 전용 `proxy-server.js`가 배포됩니다.
 
 ### 제약
 
 | 항목 | 내용 |
 |------|------|
-| PC 켜짐 | `npm start` 실행 중이어야 데이터 조회 가능 |
-| 다른 사람 | 같은 Wi‑Fi/터널 없으면 이 PC API에 접근 불가 |
-| Firestore | 한 PC가 조회·publish하면 다른 브라우저는 **구독만** 가능 |
+| 데이터 저장 | 브라우저별 **IndexedDB** 로컬 캐시 — 기기/브라우저 간 공유되지 않음 |
+| 결제 프록시 | 배포본은 **Render**, 로컬은 `npm start`가 담당 (결제 API CORS 우회용) |
+| 공유 | 팀원은 각자 **https://mvc-contract-cdb96.web.app** 에서 본인 계정으로 로그인 |
 
 ## 실행
 
@@ -115,100 +117,44 @@ npm start
 
 | 구성 | URL / 상태 |
 |------|------------|
-| 화면 (Firebase Hosting) | https://mvc-contract-cdb96.web.app ✅ |
-| API (Render) | https://miso-contract-api.onrender.com — **최초 1회 배포 필요** |
+| 화면 (Firebase Hosting · **정적 호스팅 전용**) | https://mvc-contract-cdb96.web.app ✅ |
+| 결제 프록시 (Render) | https://miso-contract-api.onrender.com — **최초 1회 배포 필요** |
 
-### API 서버 최초 배포 (관리자 1회, 약 5분)
+> Firebase는 **정적 파일 호스팅 용도로만** 사용합니다. Firestore(DB)·Functions는 쓰지 않습니다.
+> 데이터 저장은 각 브라우저의 **IndexedDB**, 결제 API의 CORS 우회는 **Render 프록시**가 담당합니다.
+
+### 결제 프록시 최초 배포 (관리자 1회, 약 5분)
 
 1. 이 프로젝트를 **GitHub**에 push
 2. [Render](https://dashboard.render.com) → **New +** → **Blueprint** (또는 Web Service)
-3. GitHub 저장소 연결 → `render.yaml` 자동 적용
-4. 서비스 이름 **`miso-contract-api`** 유지 (Hosting과 URL이 맞춰져 있음)
-5. 배포 완료 후 https://miso-contract-api.onrender.com/api/health → `{"ok":true,...}` 확인
+3. GitHub 저장소 연결 → `render.yaml` 자동 적용 (`startCommand: node proxy-server.js`)
+4. 서비스 이름 **`miso-contract-api`** 유지 (프론트의 프록시 URL과 맞춰져 있음 — `miso-api.js`)
+5. 배포 완료 후 https://miso-contract-api.onrender.com/api/health → `{"ok":true,"role":"payment-proxy",...}` 확인
 
 이후 팀원은 **https://mvc-contract-cdb96.web.app** 만 공유하면 됩니다.
 
-> Render 무료 플랜: 15분 미사용 시 sleep → 첫 접속 30초~1분 걸릴 수 있습니다.
+> Render 무료 플랜: 15분 미사용 시 sleep → 첫 결제 조회가 30초~1분 걸릴 수 있습니다.
+> 프록시 URL을 바꾸려면 `miso-api.js`의 `PAYMENT_PROXY` 상수를 수정하세요.
 
-## Firebase 설정
-
-프로젝트: **`mvc-contract`**
-
-대시보드 갱신 시 지표가 **Firestore** `dashboard/{serviceId}` 문서에 저장되고,
-다른 브라우저/탭에서 실시간으로 반영됩니다.
-
-### 사전 준비
-
-1. [Firebase Console](https://console.firebase.google.com/) → `mvc-contract` → **Firestore Database** 생성 (테스트 모드 또는 프로덕션)
-2. CLI 로그인: `firebase login`
-
-### Rules 배포
-
-```bash
-firebase deploy --only firestore:rules
-```
-
-개발용 `firestore.rules`는 `dashboard/{serviceId}` 읽기/쓰기를 허용합니다. 운영 환경에서는 인증 규칙으로 제한하세요.
-
-### 웹 앱 설정
-
-`firebase-sync.js`에 Console에서 받은 config가 반영되어 있습니다.
-Miso API 인증 정보는 Firebase에 저장하지 않습니다.
-
-### Hosting 배포 (프론트)
+## Firebase 설정 (Hosting 전용)
 
 사이트: **`mvc-contract-cdb96`** · public 폴더: `public/`
 
+Firebase는 **정적 파일(HTML/JS)을 호스팅하는 용도로만** 씁니다.
+Firestore·Functions·서버 계산은 사용하지 않습니다.
+
+### Hosting 배포 (프론트)
+
 ```bash
-npm run deploy:hosting
+firebase login          # 최초 1회
+npm run deploy:hosting   # build:hosting → public/ 생성 후 hosting 배포
 ```
 
 배포 URL: `https://mvc-contract-cdb96.web.app`
 
-Hosting은 **정적 파일(HTML/JS)** 만 제공합니다. Miso API 프록시(`/api/*`)는 **별도 API 서버**가 필요합니다.
-
-### API 서버 배포 (Render)
-
-Firebase Spark(무료)에서도 동작합니다. 프론트는 Firebase Hosting, API는 Render에 분리 배포합니다.
-
-```
-[브라우저] → Firebase Hosting (index.html)
-                ↓ fetch
-            Render API (server.js) → Miso 백오피스 API
-```
-
-#### 1. GitHub에 코드 push
-
-저장소 루트에 `render.yaml`이 포함되어 있어야 합니다.
-
-#### 2. Render에서 Web Service 생성
-
-1. [Render](https://render.com) → **New +** → **Web Service**
-2. GitHub 저장소 연결
-3. 설정 (Blueprint 미사용 시):
-   - **Build Command:** `npm install`
-   - **Start Command:** `npm start`
-   - **Health Check Path:** `/api/health`
-4. **Environment Variables:**
-   - `API_ONLY` = `1`
-   - (선택) `MISO_USER`, `MISO_PASS` — 대시보드 입력 없이 API만 쓸 때
-5. 배포 후 URL 확인 (예: `https://miso-contract-api.onrender.com`)
-
-> Render 무료 플랜은 15분 미사용 시 sleep → 첫 요청이 30초~1분 걸릴 수 있습니다.
-
-#### 3. Firebase Hosting (이미 연결됨)
-
-Hosting 빌드 시 API URL이 자동 주입됩니다 (`https://miso-contract-api.onrender.com`).
-
-서비스 이름을 바꿨다면:
-
-```bash
-DASHBOARD_API_BASE=https://YOUR-SERVICE.onrender.com npm run deploy:hosting
-```
-
-### Firestore 동기화
-
-대시보드 갱신 시 지표가 Firestore `dashboard/{serviceId}`에 저장되어 다른 탭/브라우저와 공유됩니다. Miso 인증 정보는 Firebase에 저장하지 않습니다.
+- `build:hosting`이 SPA 정적 파일을 `public/`로 복사한 뒤 Firebase Hosting에 올립니다.
+- Miso API 인증 정보는 어디에도 저장하지 않습니다. (로그인 입력값은 입력한 브라우저 `localStorage`에만 보관)
+- 결제 API CORS 우회는 별도의 **Render 프록시**가 담당합니다. (위 "결제 프록시 최초 배포" 참고)
 
 ## 참고
 

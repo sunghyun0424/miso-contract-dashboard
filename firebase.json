@@ -1,17 +1,4 @@
 {
-  "firestore": {
-    "rules": "firestore.rules",
-    "indexes": "firestore.indexes.json"
-  },
-  "functions": [
-    {
-      "source": "functions",
-      "codebase": "default",
-      "predeploy": [
-        "npm run build:functions"
-      ]
-    }
-  ],
   "hosting": {
     "site": "mvc-contract-cdb96",
     "public": "public",

@@ -360,7 +360,6 @@
 
 <script src="metrics.js?v=3"></script>
 <script type="module">
-  import { publishDashboard, subscribeDashboard } from './firebase-sync.js?v=3';
   import { OrderStore, SyncState } from './idb-sync.js?v=3';
   import { MisoClient } from './miso-api.js?v=3';
   import { buildSheet, sortOrders } from './miso-sheets.js?v=3';
@@ -385,8 +384,6 @@
     }
     return window._misoClient;
   };
-  window.firebaseSync = { publishDashboard, subscribeDashboard };
-  window.dispatchEvent(new Event('firebase-ready'));
   window.dispatchEvent(new Event('idb-ready'));
 </script>
 <script>
@@ -402,7 +399,6 @@
   let timer = null, countdownTimer = null, nextAt = 0, loading = false, refreshing = false;
   let lastData = null, timeMode = 'hourly';
   let chTime = null, chDonut = null, chDays = null;
-  let applyingRemote = false;
   let appStarted = false;
 
   const C = { indigo:'#6366f1', blue:'#3b82f6', green:'#22c55e', amber:'#f59e0b', grayBar:'#e5e9f2', muted:'#8a94ad' };
@@ -738,16 +734,6 @@
     renderTodayRows(data.todayItems);
   }
 
-  function bindFirebaseSync() {
-    if (!window.firebaseSync) return;
-    window.firebaseSync.subscribeDashboard(serviceEl.value, (data) => {
-      applyingRemote = true;
-      renderAll(data);
-      setStatus('live', 'Firebase 동기화 · ' + fmt(data.generatedAt));
-      applyingRemote = false;
-    });
-  }
-
   let loadStartedAt = 0, loadTickTimer = null;
   function startLoadTimer() {
     loadStartedAt = Date.now();
@@ -762,13 +748,6 @@
   function stopLoadTimer() {
     if (loadTickTimer) { clearInterval(loadTickTimer); loadTickTimer = null; }
   }
-  async function pushFirebase(data) {
-    if (applyingRemote || !window.firebaseSync) return;
-    try {
-      await window.firebaseSync.publishDashboard(serviceEl.value, data);
-    } catch (_) { /* Firebase 미연결 시 로컬 대시보드는 계속 동작 */ }
-  }
-
   async function hydrateFromIdb() {
     if (!window.misoMetrics || !window.getOrderStore) return false;
     const store = window.getOrderStore(serviceEl.value);
@@ -843,8 +822,7 @@
       }
       renderAll(data);
       clearError();
-      setStatus('live', (data.fromCache ? '로컬+동기화 · ' : '최근 갱신: ') + fmt(data.generatedAt));
-      pushFirebase(data);
+      setStatus('live', (data.fromCache ? '로컬 캐시 · ' : '최근 갱신: ') + fmt(data.generatedAt));
     } catch (e) {
       if (lastData) {
         setStatus('live', '갱신 실패 · ' + fmt(lastData.generatedAt) + ' 데이터 유지');
@@ -922,7 +900,7 @@
 
   $('reloadBtn').onclick = () => load(false);
   $('settingsBtn').onclick = () => toggleSettings();
-  $('applyBtn').onclick = () => { load(false); toggleSettings(false); bindFirebaseSync(); };
+  $('applyBtn').onclick = () => { load(false); toggleSettings(false); };
   $('forceBtn').onclick = () => load(true);
   $('tg_hourly').onclick = () => setMode('hourly');
   $('tg_cum').onclick = () => setMode('cumulative');
@@ -953,11 +931,10 @@
   function startApp() {
     if (appStarted) return;
     appStarted = true;
-    bindFirebaseSync();
     if (userEl.value && pwEl.value) load(false); else toggleSettings(true);
   }
-  window.addEventListener('firebase-ready', startApp);
-  if (window.firebaseSync) startApp();
+  window.addEventListener('idb-ready', startApp);
+  if (window.getMisoClient) startApp();
 </script>
 <script src="/pwa-register.js?v=3"></script>
 </body>
