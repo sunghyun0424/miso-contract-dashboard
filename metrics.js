@@ -58,7 +58,8 @@ function clampYmd(v, fallback) {
 
 function resolveOpts(opts, cfg) {
   cfg = cfg || {};
-  const lookbackDays = cfg.lookbackDays ?? 45;
+  // 선택한 과거 날짜를 덮기 위한 절대 스캔 상한(일). 기본 2년. (폭주 방지용)
+  const maxScanDays = cfg.maxScanDays ?? 730;
   const paymentLagDays = cfg.paymentLagDays ?? 21;
   opts = opts || {};
   const today = todaySeoul();
@@ -75,7 +76,9 @@ function resolveOpts(opts, cfg) {
   const paymentStart = minYmd(today, yesterday, dayA, dayB, rangeStart, sevenStart, weekStart);
   const paymentEnd = maxYmd(today, dayA, dayB, rangeEnd, weekEnd);
   const neededStart = minYmd(leadStart, shiftDate(paymentStart, -paymentLagDays));
-  const fetchStart = maxYmd(neededStart, shiftDate(today, -lookbackDays));
+  // 선택한 날짜(dayA/dayB/range)가 과거면 그만큼 더 스캔해 과거 비교를 지원한다.
+  // lookback 으로 자르지 않고, 폭주 방지용 maxScanDays 까지만 허용.
+  const fetchStart = maxYmd(neededStart, shiftDate(today, -maxScanDays));
   return {
     today, yesterday, sevenStart, weekStart, weekEnd,
     dayA, dayB, rangeStart, rangeEnd,

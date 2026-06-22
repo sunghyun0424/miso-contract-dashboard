@@ -358,11 +358,11 @@
   </div>
 </div>
 
-<script src="metrics.js?v=4"></script>
+<script src="metrics.js?v=5"></script>
 <script type="module">
-  import { OrderStore, SyncState } from './idb-sync.js?v=4';
-  import { MisoClient } from './miso-api.js?v=4';
-  import { buildSheet, sortOrders } from './miso-sheets.js?v=4';
+  import { OrderStore, SyncState } from './idb-sync.js?v=5';
+  import { MisoClient } from './miso-api.js?v=5';
+  import { buildSheet, sortOrders } from './miso-sheets.js?v=5';
   window.misoMetrics = globalThis.MisoMetrics;
   window.misoSyncState = SyncState;
   window.misoSheets = { buildSheet, sortOrders };
@@ -741,7 +741,7 @@
     loadTickTimer = setInterval(() => {
       if (!loading) return;
       const sec = Math.round((Date.now() - loadStartedAt) / 1000);
-      const hint = sec < 30 ? '미소 API 조회 중…' : sec < 120 ? '결제 내역 집계 중… (최초 1~3분)' : '아직 처리 중… 잠시만 기다려 주세요';
+      const hint = sec < 30 ? '미소 API 조회 중…' : sec < 120 ? '주문 내역 스캔 중… (과거 기간일수록 오래 걸려요)' : '아직 처리 중… 잠시만 기다려 주세요';
       setStatus('loading', '갱신 중… ' + sec + '초 · ' + hint);
     }, 1000);
   }
@@ -774,11 +774,14 @@
     const store = window.getOrderStore(serviceEl.value);
     const cached = await store.hydrateFresh();
     if (!cached.length) return false;
+    const ctx = window.misoMetrics.resolveOpts(dashParams());
+    // 캐시가 선택 기간(fetchStart)을 못 덮으면(과거 날짜 선택 등) 새로 조회하도록 false 반환
+    const minCached = cached.reduce((m, o) => (o.createdYmd && o.createdYmd < m ? o.createdYmd : m), '9999-99-99');
+    if (ctx.fetchStart < minCached) return false;
     const user = userEl.value.trim(), pw = pwEl.value;
     if (user && pw && window.getMisoClient) {
       window.getMisoClient(user, pw, serviceEl.value).setQualifiedFromOrders(cached, dashParams());
     }
-    const ctx = window.misoMetrics.resolveOpts(dashParams());
     const data = window.misoMetrics.buildDashboardFromOrders(
       window.misoMetrics.filterQualified(cached), ctx, serviceEl.value,
       { fromCache: true, generatedAt: new Date().toISOString() }
@@ -797,7 +800,7 @@
 
     if (!lastData && !force) await hydrateFromIdb();
     const silent = options.silent ?? !!lastData;
-    const showLoading = !silent && !lastData;
+    const showLoading = options.show || (!silent && !lastData);
     if (loading && !showLoading) return;
 
     if (showLoading) {
@@ -895,7 +898,7 @@
     else if (kind === 'month') start = TODAY.slice(0,8) + '01';
     $('rangeStart').value = start; $('rangeEnd').value = end;
     document.querySelectorAll('.preset[data-range]').forEach((b) => b.classList.toggle('on', b.dataset.range===kind));
-    recomputeFromIdb().then((ok) => { if (!ok) load(false); });
+    recomputeFromIdb().then((ok) => { if (!ok) load(false, { show: true }); });
   }
 
   $('reloadBtn').onclick = () => load(false);
@@ -904,11 +907,11 @@
   $('forceBtn').onclick = () => load(true);
   $('tg_hourly').onclick = () => setMode('hourly');
   $('tg_cum').onclick = () => setMode('cumulative');
-  $('dayA').onchange = async () => { if (!(await recomputeFromIdb())) load(false); };
-  $('dayB').onchange = async () => { if (!(await recomputeFromIdb())) load(false); };
-  $('ttToday').onclick = async () => { $('dayA').value = TODAY; $('dayB').value = shiftYmd(TODAY,-1); if (!(await recomputeFromIdb())) load(false); };
-  $('rangeStart').onchange = async () => { document.querySelectorAll('.preset[data-range]').forEach((b)=>b.classList.remove('on')); if (!(await recomputeFromIdb())) load(false); };
-  $('rangeEnd').onchange = async () => { document.querySelectorAll('.preset[data-range]').forEach((b)=>b.classList.remove('on')); if (!(await recomputeFromIdb())) load(false); };
+  $('dayA').onchange = async () => { if (!(await recomputeFromIdb())) load(false, { show: true }); };
+  $('dayB').onchange = async () => { if (!(await recomputeFromIdb())) load(false, { show: true }); };
+  $('ttToday').onclick = async () => { $('dayA').value = TODAY; $('dayB').value = shiftYmd(TODAY,-1); if (!(await recomputeFromIdb())) load(false, { show: true }); };
+  $('rangeStart').onchange = async () => { document.querySelectorAll('.preset[data-range]').forEach((b)=>b.classList.remove('on')); if (!(await recomputeFromIdb())) load(false, { show: true }); };
+  $('rangeEnd').onchange = async () => { document.querySelectorAll('.preset[data-range]').forEach((b)=>b.classList.remove('on')); if (!(await recomputeFromIdb())) load(false, { show: true }); };
   document.querySelectorAll('.preset[data-range]').forEach((b) => b.onclick = () => applyRangePreset(b.dataset.range));
   intervalEl.onchange = scheduleNext;
 
@@ -936,6 +939,6 @@
   window.addEventListener('idb-ready', startApp);
   if (window.getMisoClient) startApp();
 </script>
-<script src="/pwa-register.js?v=4"></script>
+<script src="/pwa-register.js?v=5"></script>
 </body>
 </html>
