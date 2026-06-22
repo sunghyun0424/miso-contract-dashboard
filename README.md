@@ -107,6 +107,29 @@ npm start
 > 기간을 과거로 넓게 잡으면 그만큼 스캔 범위가 늘어나 갱신이 느려질 수 있습니다.
 > (스캔 시작일은 선택 기간 + 접수→결제 지연 버퍼 `PAYMENT_LAG_DAYS`(기본 21일)를 포함하도록 자동 확장됩니다.)
 
+## 팀 공유 URL
+
+**대시보드:** https://mvc-contract-cdb96.web.app
+
+아이디/비밀번호 입력 후 바로 사용합니다. 별도 설치·로컬 서버 불필요.
+
+| 구성 | URL / 상태 |
+|------|------------|
+| 화면 (Firebase Hosting) | https://mvc-contract-cdb96.web.app ✅ |
+| API (Render) | https://miso-contract-api.onrender.com — **최초 1회 배포 필요** |
+
+### API 서버 최초 배포 (관리자 1회, 약 5분)
+
+1. 이 프로젝트를 **GitHub**에 push
+2. [Render](https://dashboard.render.com) → **New +** → **Blueprint** (또는 Web Service)
+3. GitHub 저장소 연결 → `render.yaml` 자동 적용
+4. 서비스 이름 **`miso-contract-api`** 유지 (Hosting과 URL이 맞춰져 있음)
+5. 배포 완료 후 https://miso-contract-api.onrender.com/api/health → `{"ok":true,...}` 확인
+
+이후 팀원은 **https://mvc-contract-cdb96.web.app** 만 공유하면 됩니다.
+
+> Render 무료 플랜: 15분 미사용 시 sleep → 첫 접속 30초~1분 걸릴 수 있습니다.
+
 ## Firebase 설정
 
 프로젝트: **`mvc-contract`**
@@ -173,26 +196,15 @@ Firebase Spark(무료)에서도 동작합니다. 프론트는 Firebase Hosting, 
 
 > Render 무료 플랜은 15분 미사용 시 sleep → 첫 요청이 30초~1분 걸릴 수 있습니다.
 
-#### 3. Firebase Hosting에 API URL 연결
+#### 3. Firebase Hosting (이미 연결됨)
 
-Render URL을 환경변수로 넣고 Hosting 재배포:
+Hosting 빌드 시 API URL이 자동 주입됩니다 (`https://miso-contract-api.onrender.com`).
 
-```bash
-DASHBOARD_API_BASE=https://miso-contract-api.onrender.com npm run deploy:hosting
-```
-
-`.env` 파일을 쓰려면:
+서비스 이름을 바꿨다면:
 
 ```bash
-cp .env.example .env
-# .env 에 DASHBOARD_API_BASE=https://... 설정 후
-export $(grep -v '^#' .env | xargs) && npm run deploy:hosting
+DASHBOARD_API_BASE=https://YOUR-SERVICE.onrender.com npm run deploy:hosting
 ```
-
-#### 4. 동작 확인
-
-- API: `https://YOUR-API.onrender.com/api/health` → `{"ok":true,...}`
-- 대시보드: `https://mvc-contract-cdb96.web.app` → 로그인 후 데이터 로드
 
 ### Firestore 동기화
 
