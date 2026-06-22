@@ -358,12 +358,12 @@
   </div>
 </div>
 
-<script src="metrics.js"></script>
+<script src="metrics.js?v=3"></script>
 <script type="module">
-  import { publishDashboard, subscribeDashboard } from './firebase-sync.js';
-  import { OrderStore, SyncState } from './idb-sync.js';
-  import { MisoClient } from './miso-api.js';
-  import { buildSheet, sortOrders } from './miso-sheets.js';
+  import { publishDashboard, subscribeDashboard } from './firebase-sync.js?v=3';
+  import { OrderStore, SyncState } from './idb-sync.js?v=3';
+  import { MisoClient } from './miso-api.js?v=3';
+  import { buildSheet, sortOrders } from './miso-sheets.js?v=3';
   window.misoMetrics = globalThis.MisoMetrics;
   window.misoSyncState = SyncState;
   window.misoSheets = { buildSheet, sortOrders };
@@ -959,6 +959,6 @@
   window.addEventListener('firebase-ready', startApp);
   if (window.firebaseSync) startApp();
 </script>
-<script src="/pwa-register.js"></script>
+<script src="/pwa-register.js?v=3"></script>
 </body>
 </html>

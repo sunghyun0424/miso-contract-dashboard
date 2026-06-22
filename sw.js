@@ -1,21 +1,12 @@
 /* eslint-disable no-restricted-globals */
 'use strict';
 
-const VERSION = '20260622f';
+const VERSION = '20260622g';
 const SHELL = 'miso-dashboard-shell-' + VERSION;
 const CDN = 'miso-dashboard-cdn-' + VERSION;
 
-const PRECACHE = [
-  '/',
-  '/index.html',
-  '/miso-logo.svg',
-  '/metrics.js',
-  '/miso-api.js',
-  '/miso-sheets.js',
-  '/idb-sync.js',
-  '/pwa-register.js',
-  '/manifest.webmanifest',
-];
+/** JS는 precache 안 함 — 구버전 캐시로 API URL 꼬임 방지 */
+const PRECACHE = ['/', '/index.html', '/miso-logo.svg', '/manifest.webmanifest'];
 
 self.addEventListener('install', (event) => {
   event.waitUntil(
@@ -35,6 +26,10 @@ self.addEventListener('activate', (event) => {
 
 function isCdnRequest(url) {
   return url.hostname.includes('cdn.jsdelivr.net') || url.hostname.includes('fonts.googleapis.com') || url.hostname.includes('fonts.gstatic.com');
+}
+
+function isAppScript(pathname) {
+  return /\.(js|webmanifest)$/.test(pathname);
 }
 
 self.addEventListener('fetch', (event) => {
@@ -70,16 +65,28 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
+  if (isAppScript(url.pathname)) {
+    event.respondWith(
+      fetch(event.request).then((res) => {
+        if (res.ok) {
+          caches.open(SHELL).then((cache) => cache.put(event.request, res.clone()));
+        }
+        return res;
+      }).catch(() => caches.match(event.request).then((m) => m || Response.error()))
+    );
+    return;
+  }
+
   event.respondWith(
     caches.open(SHELL).then(async (cache) => {
       const cached = await cache.match(event.request);
-      const network = fetch(event.request)
-        .then((res) => {
-          if (res.ok) cache.put(event.request, res.clone());
-          return res;
-        })
-        .catch(() => null);
-      return cached || network.then((r) => r || caches.match('/index.html'));
+      try {
+        const res = await fetch(event.request);
+        if (res.ok) cache.put(event.request, res.clone());
+        return res;
+      } catch (_) {
+        return cached || Response.error();
+      }
     })
   );
 });
