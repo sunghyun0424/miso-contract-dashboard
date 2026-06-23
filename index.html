@@ -389,10 +389,10 @@
           <div class="it"><div class="n" id="pr_inc" style="color:var(--amber)">–</div><div class="l">인센티브</div></div>
           <div class="it"><div class="n" id="pr_fee" style="color:var(--green)">–</div><div class="l">방문비(프리랜서)</div></div>
         </div>
-        <div style="max-height:520px;overflow:auto">
+        <div style="overflow-x:auto">
           <table id="payrollTable">
-            <thead><tr><th>이름</th><th>구분</th><th>방문</th><th>계약</th><th>기본급</th><th>인센티브</th><th>방문총액</th><th>지급합계</th></tr></thead>
-            <tbody id="payrollBody"><tr><td colspan="8" class="empty">월을 선택하고 [계산]을 누르세요.</td></tr></tbody>
+            <thead id="payrollHead"></thead>
+            <tbody id="payrollBody"><tr><td colspan="10" class="empty">월을 선택하고 [계산]을 누르세요.</td></tr></tbody>
           </table>
         </div>
       </div>
@@ -425,11 +425,11 @@
   </div>
 </div>
 
-<script src="metrics.js?v=15"></script>
+<script src="metrics.js?v=16"></script>
 <script type="module">
-  import { OrderStore, SyncState } from './idb-sync.js?v=15';
-  import { MisoClient } from './miso-api.js?v=15';
-  import { buildSheet, sortOrders } from './miso-sheets.js?v=15';
+  import { OrderStore, SyncState } from './idb-sync.js?v=16';
+  import { MisoClient } from './miso-api.js?v=16';
+  import { buildSheet, sortOrders } from './miso-sheets.js?v=16';
   window.misoMetrics = globalThis.MisoMetrics;
   window.misoSyncState = SyncState;
   window.misoSheets = { buildSheet, sortOrders };
@@ -1132,18 +1132,24 @@
     if (!window.getMisoClient) return;
     const month = $('payrollMonth').value;
     if (!month) return;
-    $('payrollBody').innerHTML = '<tr><td colspan="8" class="empty">계산 중… (월 전체 스캔 + 플래너 조회, 30~60초)</td></tr>';
+    $('payrollBody').innerHTML = '<tr><td colspan="10" class="empty">계산 중… (월 전체 스캔 + 플래너 조회, 30~60초)</td></tr>';
     $('payrollCap').textContent = month + ' 계산 중…';
     try {
-      const res = await window.getMisoClient(user, pw, serviceEl.value).loadPlannerPayroll(month);
-      payrollData = res;
-      renderPayroll(res);
+      payrollData = await window.getMisoClient(user, pw, serviceEl.value).loadPlannerPayroll(month);
+      renderPayroll();
     } catch (e) {
-      $('payrollBody').innerHTML = '<tr><td colspan="8" class="empty">' + (e.message || '계산 실패') + '</td></tr>';
+      $('payrollBody').innerHTML = '<tr><td colspan="10" class="empty">' + (e.message || '계산 실패') + '</td></tr>';
       $('payrollCap').textContent = month + ' 계산 실패';
     }
   }
-  function renderPayroll(res) {
+  const PR_COLS = [
+    { k: 'name', l: '이름' }, { k: 'grp', l: '구분' }, { k: 'visits', l: '방문' }, { k: 'contracts', l: '계약' },
+    { k: 'proc', l: '처리중' }, { k: 'rate', l: '계약률' }, { k: 'base', l: '기본급' }, { k: 'inc', l: '인센티브' },
+    { k: 'fee', l: '방문총액' }, { k: 'total', l: '지급합계' },
+  ];
+  let payrollSort = { key: null, dir: 'asc' };
+  function renderPayroll() {
+    const res = payrollData; if (!res) return;
     const t = res.totals;
     $('payrollSummary').style.display = '';
     $('pr_total').textContent = pwon(t.total) + '원';
@@ -1151,25 +1157,50 @@
     $('pr_inc').textContent = pwon(t.inc) + '원';
     $('pr_fee').textContent = pwon(t.fee) + '원';
     $('payrollCap').textContent = res.month + ' · ' + res.rows.length + '명 · 방문 ' + t.visits + ' · 계약 ' + t.contracts + ' · 계약직 기본급+인센 / 프리랜서 방문비 / Ops 0';
-    const body = res.rows.map((r) =>
+    $('payrollHead').innerHTML = '<tr>' + PR_COLS.map((c) =>
+      '<th data-pk="' + c.k + '" style="cursor:pointer;white-space:nowrap">' + c.l +
+      (payrollSort.key === c.k ? (payrollSort.dir === 'asc' ? ' ▲' : ' ▼') : '') + '</th>'
+    ).join('') + '</tr>';
+    $('payrollHead').querySelectorAll('th').forEach((th) => {
+      th.onclick = () => {
+        const k = th.dataset.pk;
+        if (payrollSort.key === k) payrollSort.dir = payrollSort.dir === 'asc' ? 'desc' : 'asc';
+        else { payrollSort.key = k; payrollSort.dir = (k === 'name' || k === 'grp') ? 'asc' : 'desc'; }
+        renderPayroll();
+      };
+    });
+    let rows = res.rows.slice();
+    if (payrollSort.key) {
+      const k = payrollSort.key, mul = payrollSort.dir === 'desc' ? -1 : 1;
+      rows.sort((a, b) => {
+        const av = a[k], bv = b[k];
+        if (typeof av === 'number' && typeof bv === 'number') return (av - bv) * mul;
+        return String(av).localeCompare(String(bv), 'ko') * mul;
+      });
+    }
+    const cell = (r) =>
       '<tr><td>' + r.name + '</td><td>' + r.grp + '</td>' +
       '<td' + (r.visits ? ' class="prlink" data-name="' + r.name + '" data-kind="visit"' : '') + '>' + r.visits + '</td>' +
       '<td' + (r.contracts ? ' class="prlink" data-name="' + r.name + '" data-kind="contract"' : '') + '>' + r.contracts + '</td>' +
-      '<td>' + (r.base ? pwon(r.base) : '–') + '</td><td>' + (r.inc ? pwon(r.inc) : '–') + '</td><td>' +
-      (r.fee ? pwon(r.fee) : '–') + '</td><td><b>' + pwon(r.total) + '</b></td></tr>'
-    ).join('');
-    $('payrollBody').innerHTML = body +
+      '<td' + (r.proc ? ' class="prlink" data-name="' + r.name + '" data-kind="processing"' : '') + '>' + r.proc + '</td>' +
+      '<td>' + (r.visits ? r.rate + '%' : '–') + '</td>' +
+      '<td>' + (r.base ? pwon(r.base) : '–') + '</td><td>' + (r.inc ? pwon(r.inc) : '–') + '</td>' +
+      '<td>' + (r.fee ? pwon(r.fee) : '–') + '</td><td><b>' + pwon(r.total) + '</b></td></tr>';
+    $('payrollBody').innerHTML = rows.map(cell).join('') +
       '<tr style="font-weight:700;background:#f7f8fc"><td>합계</td><td>–</td><td>' + t.visits + '</td><td>' + t.contracts + '</td><td>' +
+      (res.rows.reduce((s, r) => s + r.proc, 0)) + '</td><td>' + (t.visits ? (Math.round(t.contracts / t.visits * 1000) / 10) + '%' : '–') + '</td><td>' +
       pwon(t.base) + '</td><td>' + pwon(t.inc) + '</td><td>' + pwon(t.fee) + '</td><td>' + pwon(t.total) + '</td></tr>';
   }
   function exportPayrollCsv() {
     if (!payrollData) return;
-    const cols = [['이름', 'name'], ['구분', 'grp'], ['방문', 'visits'], ['계약', 'contracts'], ['기본급', 'base'], ['인센티브', 'inc'], ['방문총액', 'fee'], ['지급합계', 'total']];
+    const cols = [['이름', 'name'], ['구분', 'grp'], ['방문', 'visits'], ['계약', 'contracts'], ['처리중', 'proc'], ['계약률', 'rate'], ['기본급', 'base'], ['인센티브', 'inc'], ['방문총액', 'fee'], ['지급합계', 'total']];
     const esc = (v) => '"' + String(v == null ? '' : v).replace(/"/g, '""') + '"';
     const lines = [cols.map((c) => esc(c[0])).join(',')];
     payrollData.rows.forEach((r) => lines.push(cols.map((c) => esc(r[c[1]])).join(',')));
     const t = payrollData.totals;
-    lines.push(['합계', '', t.visits, t.contracts, t.base, t.inc, t.fee, t.total].map(esc).join(','));
+    const procT = payrollData.rows.reduce((s, r) => s + r.proc, 0);
+    const rateT = t.visits ? Math.round(t.contracts / t.visits * 1000) / 10 : '';
+    lines.push(['합계', '', t.visits, t.contracts, procT, rateT, t.base, t.inc, t.fee, t.total].map(esc).join(','));
     const blob = new Blob(['﻿' + lines.join('\n')], { type: 'text/csv;charset=utf-8' });
     const a = document.createElement('a'); a.href = URL.createObjectURL(blob);
     a.download = '플래너정산_' + payrollData.month + '.csv'; a.click(); URL.revokeObjectURL(a.href);
@@ -1186,6 +1217,7 @@
     if (!row || !row.orders) return;
     let orders = row.orders.slice();
     if (kind === 'contract') orders = orders.filter((o) => o.contracted);
+    else if (kind === 'processing') orders = orders.filter((o) => o.status === 'processing');
     orders.sort((a, b) => String(b.visitDisp).localeCompare(String(a.visitDisp)));
     const cols = kind === 'contract'
       ? [{ key: 'visit', label: '방문일시' }, { key: 'id', label: '주문 ID' }, { key: 'status', label: '주문상태' }]
@@ -1193,8 +1225,8 @@
     const rows = orders.map((o) => ({ visit: o.visitDisp, id: o.id, status: o.status, kind: o.kind, contract: o.contracted ? 'O' : '–' }));
     sheetState = {
       payrollRows: rows, columns: cols, sort: null, dir: 'asc',
-      title: name + (kind === 'contract' ? ' · 계약' : ' · 방문') + ' (' + payrollData.month + ')',
-      subtitle: (kind === 'contract' ? '계약(confirming/complete)' : '방문 — 상담/방문중') + ' · ' + rows.length + '건 · 주문 ID 클릭 시 백오피스',
+      title: name + (kind === 'contract' ? ' · 계약' : kind === 'processing' ? ' · 처리중' : ' · 방문') + ' (' + payrollData.month + ')',
+      subtitle: (kind === 'contract' ? '계약(confirming/complete)' : kind === 'processing' ? '방문 완료 · 처리중(processing)' : '방문 — 상담/방문중') + ' · ' + rows.length + '건 · 주문 ID 클릭 시 백오피스',
     };
     $('sheetOverlay').classList.add('open');
     $('sheetSearch').value = '';
@@ -1226,6 +1258,6 @@
   window.addEventListener('idb-ready', startApp);
   if (window.getMisoClient) startApp();
 </script>
-<script src="/pwa-register.js?v=15"></script>
+<script src="/pwa-register.js?v=16"></script>
 </body>
 </html>

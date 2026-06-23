@@ -1,6 +1,6 @@
 'use strict';
 
-import { buildPayroll } from './miso-planner.js?v=15';
+import { buildPayroll } from './miso-planner.js?v=16';
 
 const LOGIN_URL = 'https://rfq.getmiso.com/backoffice/login';
 const REQUESTS_URL = 'https://rfq.getmiso.com/backoffice/requests';

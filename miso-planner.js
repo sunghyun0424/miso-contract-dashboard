@@ -72,10 +72,11 @@ export function buildPayroll(rawOrders, partnerMap, month, todayYmd) {
     if (!vy || vy.slice(0, 7) !== month) continue;
     if (isCurrentMonth && vy > todayYmd) continue; // 아직 안 지난 방문 제외
     const pid = chosen.partner_id;
-    const a = agg[pid] || (agg[pid] = { vf: 0, vq: 0, c: 0, orders: [] });
+    const a = agg[pid] || (agg[pid] = { vf: 0, vq: 0, c: 0, proc: 0, orders: [] });
     const isContractOrder = isQual && contracted;
     a.vf += 1;
     if (isQual) { a.vq += 1; if (contracted) a.c += 1; }
+    if (r.status === 'processing') a.proc += 1;
     a.orders.push({ id: r.id, visitDisp: kstDisp(chosen.visit_schedule), visitYmd: vy, status: r.status, contracted: isContractOrder, kind: isQual ? '상담' : '방문중' });
   }
 
@@ -100,7 +101,7 @@ export function buildPayroll(rawOrders, partnerMap, month, todayYmd) {
       grp = '프리랜서';
       fee = a.vf * C.visitFee;
     }
-    rows.push({ pid: Number(pid), name, grp, visits: a.vf, contracts: a.c, base, inc, fee, total: base + inc + fee, orders: a.orders });
+    rows.push({ pid: Number(pid), name, grp, visits: a.vf, contracts: a.c, proc: a.proc, rate: a.vf ? Math.round((a.c / a.vf) * 1000) / 10 : 0, base, inc, fee, total: base + inc + fee, orders: a.orders });
   }
 
   const rank = { '계약직': 0, '프리랜서': 1, 'Ops': 2 };
