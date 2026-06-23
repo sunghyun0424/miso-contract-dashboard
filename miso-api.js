@@ -1,7 +1,10 @@
 'use strict';
 
+import { buildPayroll } from './miso-planner.js?v=14';
+
 const LOGIN_URL = 'https://rfq.getmiso.com/backoffice/login';
 const REQUESTS_URL = 'https://rfq.getmiso.com/backoffice/requests';
+const PARTNERS_URL = 'https://rfq.getmiso.com/backoffice/partners/';
 
 const PAGE_LIMIT = 50;
 // 한 번에 병렬로 가져올 페이지 수. 배치를 받은 뒤 페이지 순서대로 윈도우 경계를 확인한다.
@@ -20,6 +23,20 @@ function metrics() {
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function mapWithConcurrency(items, limit, worker) {
+  const results = new Array(items.length);
+  let idx = 0;
+  const runners = new Array(Math.min(limit, items.length)).fill(0).map(async () => {
+    while (true) {
+      const cur = idx++;
+      if (cur >= items.length) break;
+      results[cur] = await worker(items[cur], cur);
+    }
+  });
+  await Promise.all(runners);
+  return results;
 }
 
 async function apiGet(url, token, attempt429 = 0) {
@@ -217,5 +234,51 @@ export class MisoClient {
       depositAmount: o.depositAmount, partnerPayout: o.partnerPayout, remainingBalance: o.remainingBalance,
     }));
     return dashboard;
+  }
+
+  // 파트너 정보(이름·미소플래너 여부) 조회 — 캐시
+  async fetchPartner(token, id) {
+    if (!this.partnerCache) this.partnerCache = new Map();
+    if (this.partnerCache.has(id)) return this.partnerCache.get(id);
+    let info = { name: String(id), isPlanner: false };
+    try {
+      const d = await apiGet(PARTNERS_URL + id, token);
+      let tags = d && d.tags;
+      if (typeof tags === 'string') { try { tags = JSON.parse(tags); } catch (_) { tags = []; } }
+      const isPlanner = Array.isArray(tags) && tags.some((t) => t && t.tag === '미소플래너' && t.service_id === 586);
+      info = { name: (d && d.name) || String(id), isPlanner };
+    } catch (_) { /* 실패 시 기본값 */ }
+    this.partnerCache.set(id, info);
+    return info;
+  }
+
+  // 월별 플래너 정산(인건비) — month: 'YYYY-MM'
+  async loadPlannerPayroll(month) {
+    const monthStart = month + '-01';
+    const fetchStart = metrics().shiftDate(monthStart, -50); // 방문 리드타임 버퍼
+    let token = await this.getToken(false);
+    const run = async (tok) => {
+      const raw = await this.fetchRequestsInWindow(tok, fetchStart);
+      const pids = new Set();
+      for (const r of raw) {
+        for (const q of (r.quotes || [])) {
+          if (q && q.visit_schedule) {
+            const vy = metrics().toSeoulDate(q.visit_schedule);
+            if (vy && vy.slice(0, 7) === month) pids.add(q.partner_id);
+          }
+        }
+      }
+      const partnerMap = {};
+      await mapWithConcurrency([...pids], 16, async (pid) => {
+        partnerMap[pid] = await this.fetchPartner(tok, pid);
+      });
+      return buildPayroll(raw, partnerMap, month, metrics().todaySeoul());
+    };
+    try {
+      return await run(token);
+    } catch (e) {
+      if (e.status === 401) { this.token = null; token = await this.getToken(true); return await run(token); }
+      throw e;
+    }
   }
 }

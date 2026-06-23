@@ -7,7 +7,7 @@
     "start": "node server.js",
     "start:proxy": "node proxy-server.js",
     "firebase": "firebase",
-    "build:hosting": "mkdir -p public && cp index.html miso-logo.svg metrics.js miso-api.js miso-sheets.js idb-sync.js pwa-register.js sw.js manifest.webmanifest public/",
+    "build:hosting": "mkdir -p public && cp index.html miso-logo.svg metrics.js miso-api.js miso-sheets.js miso-planner.js idb-sync.js pwa-register.js sw.js manifest.webmanifest public/",
     "deploy:hosting": "npm run build:hosting && firebase deploy --only hosting:mvc-contract-cdb96"
   },
   "engines": {

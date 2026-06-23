@@ -369,6 +369,32 @@
         <div class="chart-wrap"><canvas id="chMonthly"></canvas></div>
       </div>
     </section>
+
+    <!-- 플래너 정산 (월별 인건비) -->
+    <section>
+      <div class="card" id="cardPayroll">
+        <div class="card-head">
+          <div><h3>플래너 정산 (월별 인건비)</h3><div class="cap" id="payrollCap">월 선택 후 [계산] · 계약직 기본급+인센티브 / 프리랜서 방문비 / Ops 0</div></div>
+          <div class="ctl">
+            <input type="month" id="payrollMonth" />
+            <button class="btn" id="payrollRun">계산</button>
+            <button class="btn ghost" id="payrollCsv">CSV</button>
+          </div>
+        </div>
+        <div class="summary-chips" id="payrollSummary" style="display:none">
+          <div class="it"><div class="n" id="pr_total" style="color:var(--indigo)">–</div><div class="l">총 인건비</div></div>
+          <div class="it"><div class="n" id="pr_base" style="color:var(--text)">–</div><div class="l">기본급(계약직)</div></div>
+          <div class="it"><div class="n" id="pr_inc" style="color:var(--amber)">–</div><div class="l">인센티브</div></div>
+          <div class="it"><div class="n" id="pr_fee" style="color:var(--green)">–</div><div class="l">방문비(프리랜서)</div></div>
+        </div>
+        <div style="max-height:520px;overflow:auto">
+          <table id="payrollTable">
+            <thead><tr><th>이름</th><th>구분</th><th>방문</th><th>계약</th><th>기본급</th><th>인센티브</th><th>방문총액</th><th>지급합계</th></tr></thead>
+            <tbody id="payrollBody"><tr><td colspan="8" class="empty">월을 선택하고 [계산]을 누르세요.</td></tr></tbody>
+          </table>
+        </div>
+      </div>
+    </section>
   </main>
 </div>
 
@@ -397,11 +423,11 @@
   </div>
 </div>
 
-<script src="metrics.js?v=13"></script>
+<script src="metrics.js?v=14"></script>
 <script type="module">
-  import { OrderStore, SyncState } from './idb-sync.js?v=13';
-  import { MisoClient } from './miso-api.js?v=13';
-  import { buildSheet, sortOrders } from './miso-sheets.js?v=13';
+  import { OrderStore, SyncState } from './idb-sync.js?v=14';
+  import { MisoClient } from './miso-api.js?v=14';
+  import { buildSheet, sortOrders } from './miso-sheets.js?v=14';
   window.misoMetrics = globalThis.MisoMetrics;
   window.misoSyncState = SyncState;
   window.misoSheets = { buildSheet, sortOrders };
@@ -1086,6 +1112,59 @@
   });
   intervalEl.onchange = scheduleNext;
 
+  // ---- 플래너 정산 (월별 인건비) ----
+  let payrollData = null;
+  $('payrollMonth').value = TODAY.slice(0, 7);
+  const pwon = (n) => Number(n || 0).toLocaleString();
+  async function runPayroll() {
+    const user = userEl.value.trim(), pw = pwEl.value;
+    if (!user || !pw) { setStatus('error', '로그인 정보를 입력하세요'); showError('아이디/비밀번호를 입력하세요.'); toggleSettings(true); return; }
+    if (!window.getMisoClient) return;
+    const month = $('payrollMonth').value;
+    if (!month) return;
+    $('payrollBody').innerHTML = '<tr><td colspan="8" class="empty">계산 중… (월 전체 스캔 + 플래너 조회, 30~60초)</td></tr>';
+    $('payrollCap').textContent = month + ' 계산 중…';
+    try {
+      const res = await window.getMisoClient(user, pw, serviceEl.value).loadPlannerPayroll(month);
+      payrollData = res;
+      renderPayroll(res);
+    } catch (e) {
+      $('payrollBody').innerHTML = '<tr><td colspan="8" class="empty">' + (e.message || '계산 실패') + '</td></tr>';
+      $('payrollCap').textContent = month + ' 계산 실패';
+    }
+  }
+  function renderPayroll(res) {
+    const t = res.totals;
+    $('payrollSummary').style.display = '';
+    $('pr_total').textContent = pwon(t.total) + '원';
+    $('pr_base').textContent = pwon(t.base) + '원';
+    $('pr_inc').textContent = pwon(t.inc) + '원';
+    $('pr_fee').textContent = pwon(t.fee) + '원';
+    $('payrollCap').textContent = res.month + ' · ' + res.rows.length + '명 · 방문 ' + t.visits + ' · 계약 ' + t.contracts + ' · 계약직 기본급+인센 / 프리랜서 방문비 / Ops 0';
+    const body = res.rows.map((r) =>
+      '<tr><td>' + r.name + '</td><td>' + r.grp + '</td><td>' + r.visits + '</td><td>' + r.contracts + '</td><td>' +
+      (r.base ? pwon(r.base) : '–') + '</td><td>' + (r.inc ? pwon(r.inc) : '–') + '</td><td>' +
+      (r.fee ? pwon(r.fee) : '–') + '</td><td><b>' + pwon(r.total) + '</b></td></tr>'
+    ).join('');
+    $('payrollBody').innerHTML = body +
+      '<tr style="font-weight:700;background:#f7f8fc"><td>합계</td><td>–</td><td>' + t.visits + '</td><td>' + t.contracts + '</td><td>' +
+      pwon(t.base) + '</td><td>' + pwon(t.inc) + '</td><td>' + pwon(t.fee) + '</td><td>' + pwon(t.total) + '</td></tr>';
+  }
+  function exportPayrollCsv() {
+    if (!payrollData) return;
+    const cols = [['이름', 'name'], ['구분', 'grp'], ['방문', 'visits'], ['계약', 'contracts'], ['기본급', 'base'], ['인센티브', 'inc'], ['방문총액', 'fee'], ['지급합계', 'total']];
+    const esc = (v) => '"' + String(v == null ? '' : v).replace(/"/g, '""') + '"';
+    const lines = [cols.map((c) => esc(c[0])).join(',')];
+    payrollData.rows.forEach((r) => lines.push(cols.map((c) => esc(r[c[1]])).join(',')));
+    const t = payrollData.totals;
+    lines.push(['합계', '', t.visits, t.contracts, t.base, t.inc, t.fee, t.total].map(esc).join(','));
+    const blob = new Blob(['﻿' + lines.join('\n')], { type: 'text/csv;charset=utf-8' });
+    const a = document.createElement('a'); a.href = URL.createObjectURL(blob);
+    a.download = '플래너정산_' + payrollData.month + '.csv'; a.click(); URL.revokeObjectURL(a.href);
+  }
+  $('payrollRun').onclick = runPayroll;
+  $('payrollCsv').onclick = exportPayrollCsv;
+
   // 시트: 클릭 매핑
   document.querySelectorAll('.drillable').forEach((el) => {
     el.addEventListener('click', (e) => {
@@ -1110,6 +1189,6 @@
   window.addEventListener('idb-ready', startApp);
   if (window.getMisoClient) startApp();
 </script>
-<script src="/pwa-register.js?v=13"></script>
+<script src="/pwa-register.js?v=14"></script>
 </body>
 </html>
