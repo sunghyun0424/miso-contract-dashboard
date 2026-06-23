@@ -29,6 +29,13 @@ export function shortName(n) {
   return String(n || '').replace('미소 ', '').replace(' 이사플래너', '').replace(' 이사 플래너', '').trim();
 }
 
+function kstDisp(ts) {
+  if (!ts) return '';
+  const d = new Date(ts);
+  if (isNaN(d.getTime())) return '';
+  return new Intl.DateTimeFormat('ko-KR', { timeZone: 'Asia/Seoul', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false }).format(d);
+}
+
 function latest(pool) {
   let best = null, bestKey = '';
   for (const q of pool) {
@@ -65,9 +72,11 @@ export function buildPayroll(rawOrders, partnerMap, month, todayYmd) {
     if (!vy || vy.slice(0, 7) !== month) continue;
     if (isCurrentMonth && vy > todayYmd) continue; // 아직 안 지난 방문 제외
     const pid = chosen.partner_id;
-    const a = agg[pid] || (agg[pid] = { vf: 0, vq: 0, c: 0 });
+    const a = agg[pid] || (agg[pid] = { vf: 0, vq: 0, c: 0, orders: [] });
+    const isContractOrder = isQual && contracted;
     a.vf += 1;
     if (isQual) { a.vq += 1; if (contracted) a.c += 1; }
+    a.orders.push({ id: r.id, visitDisp: kstDisp(chosen.visit_schedule), visitYmd: vy, status: r.status, contracted: isContractOrder, kind: isQual ? '상담' : '방문중' });
   }
 
   const rows = [];
@@ -91,7 +100,7 @@ export function buildPayroll(rawOrders, partnerMap, month, todayYmd) {
       grp = '프리랜서';
       fee = a.vf * C.visitFee;
     }
-    rows.push({ pid: Number(pid), name, grp, visits: a.vf, contracts: a.c, base, inc, fee, total: base + inc + fee });
+    rows.push({ pid: Number(pid), name, grp, visits: a.vf, contracts: a.c, base, inc, fee, total: base + inc + fee, orders: a.orders });
   }
 
   const rank = { '계약직': 0, '프리랜서': 1, 'Ops': 2 };

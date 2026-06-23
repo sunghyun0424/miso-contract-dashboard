@@ -56,6 +56,8 @@
   /* 메인 */
   .main { flex: 1; padding: 22px 30px 40px; max-width: 1500px; margin: 0 auto; width: 100%; }
   .main > section { margin-bottom: 22px; }
+  .prlink { cursor: pointer; color: var(--indigo); font-weight: 700; text-decoration: underline dotted; }
+  .prlink:hover { text-decoration: underline; }
   .topbar { display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; margin-bottom: 22px; }
   .topbar h1 { font-size: 22px; font-weight: 800; margin: 0; letter-spacing: -.02em; }
   .topbar .sub { color: var(--muted); font-size: 13px; margin-top: 3px; }
@@ -423,11 +425,11 @@
   </div>
 </div>
 
-<script src="metrics.js?v=14"></script>
+<script src="metrics.js?v=15"></script>
 <script type="module">
-  import { OrderStore, SyncState } from './idb-sync.js?v=14';
-  import { MisoClient } from './miso-api.js?v=14';
-  import { buildSheet, sortOrders } from './miso-sheets.js?v=14';
+  import { OrderStore, SyncState } from './idb-sync.js?v=15';
+  import { MisoClient } from './miso-api.js?v=15';
+  import { buildSheet, sortOrders } from './miso-sheets.js?v=15';
   window.misoMetrics = globalThis.MisoMetrics;
   window.misoSyncState = SyncState;
   window.misoSheets = { buildSheet, sortOrders };
@@ -589,6 +591,14 @@
 
   async function fetchSheet() {
     if (!sheetState) return;
+    if (sheetState.payrollRows) {
+      let rows = sheetState.payrollRows.slice();
+      if (sheetState.sort) rows = window.misoSheets.sortOrders(rows, sheetState.sort, sheetState.dir || 'asc');
+      const q = $('sheetSearch').value.trim().toLowerCase();
+      if (q) rows = rows.filter((r) => Object.values(r).some((v) => v != null && String(v).toLowerCase().includes(q)));
+      const data = { title: sheetState.title, subtitle: sheetState.subtitle, columns: sheetState.columns, total: sheetState.payrollRows.length, rows, filtered: q ? rows.length : undefined };
+      sheetData = data; renderSheetTable(data); return;
+    }
     $('sheetBody').innerHTML = '<tr><td colspan="8" class="empty">로딩 중…</td></tr>';
     try {
       const qualified = await getSheetQualified();
@@ -1142,8 +1152,10 @@
     $('pr_fee').textContent = pwon(t.fee) + '원';
     $('payrollCap').textContent = res.month + ' · ' + res.rows.length + '명 · 방문 ' + t.visits + ' · 계약 ' + t.contracts + ' · 계약직 기본급+인센 / 프리랜서 방문비 / Ops 0';
     const body = res.rows.map((r) =>
-      '<tr><td>' + r.name + '</td><td>' + r.grp + '</td><td>' + r.visits + '</td><td>' + r.contracts + '</td><td>' +
-      (r.base ? pwon(r.base) : '–') + '</td><td>' + (r.inc ? pwon(r.inc) : '–') + '</td><td>' +
+      '<tr><td>' + r.name + '</td><td>' + r.grp + '</td>' +
+      '<td' + (r.visits ? ' class="prlink" data-name="' + r.name + '" data-kind="visit"' : '') + '>' + r.visits + '</td>' +
+      '<td' + (r.contracts ? ' class="prlink" data-name="' + r.name + '" data-kind="contract"' : '') + '>' + r.contracts + '</td>' +
+      '<td>' + (r.base ? pwon(r.base) : '–') + '</td><td>' + (r.inc ? pwon(r.inc) : '–') + '</td><td>' +
       (r.fee ? pwon(r.fee) : '–') + '</td><td><b>' + pwon(r.total) + '</b></td></tr>'
     ).join('');
     $('payrollBody').innerHTML = body +
@@ -1164,6 +1176,31 @@
   }
   $('payrollRun').onclick = runPayroll;
   $('payrollCsv').onclick = exportPayrollCsv;
+  $('payrollBody').onclick = (e) => {
+    const td = e.target.closest('.prlink');
+    if (td) openPayrollDetail(td.dataset.name, td.dataset.kind);
+  };
+  function openPayrollDetail(name, kind) {
+    if (!payrollData) return;
+    const row = payrollData.rows.find((r) => r.name === name);
+    if (!row || !row.orders) return;
+    let orders = row.orders.slice();
+    if (kind === 'contract') orders = orders.filter((o) => o.contracted);
+    orders.sort((a, b) => String(b.visitDisp).localeCompare(String(a.visitDisp)));
+    const cols = kind === 'contract'
+      ? [{ key: 'visit', label: '방문일시' }, { key: 'id', label: '주문 ID' }, { key: 'status', label: '주문상태' }]
+      : [{ key: 'visit', label: '방문일시' }, { key: 'id', label: '주문 ID' }, { key: 'status', label: '주문상태' }, { key: 'kind', label: '유형' }, { key: 'contract', label: '계약' }];
+    const rows = orders.map((o) => ({ visit: o.visitDisp, id: o.id, status: o.status, kind: o.kind, contract: o.contracted ? 'O' : '–' }));
+    sheetState = {
+      payrollRows: rows, columns: cols, sort: null, dir: 'asc',
+      title: name + (kind === 'contract' ? ' · 계약' : ' · 방문') + ' (' + payrollData.month + ')',
+      subtitle: (kind === 'contract' ? '계약(confirming/complete)' : '방문 — 상담/방문중') + ' · ' + rows.length + '건 · 주문 ID 클릭 시 백오피스',
+    };
+    $('sheetOverlay').classList.add('open');
+    $('sheetSearch').value = '';
+    renderSheetTabs();
+    fetchSheet();
+  }
 
   // 시트: 클릭 매핑
   document.querySelectorAll('.drillable').forEach((el) => {
@@ -1189,6 +1226,6 @@
   window.addEventListener('idb-ready', startApp);
   if (window.getMisoClient) startApp();
 </script>
-<script src="/pwa-register.js?v=14"></script>
+<script src="/pwa-register.js?v=15"></script>
 </body>
 </html>
