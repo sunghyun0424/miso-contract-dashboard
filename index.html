@@ -351,7 +351,7 @@
     <section>
       <div class="card drillable" id="cardMonthly" data-sheet-tabs='[{"type":"commissionByDay","label":"일자별 수수료"},{"type":"commissionOrders","label":"계약별 내역"}]'>
         <div class="card-head">
-          <div><h3>월별 매출 추이</h3><div class="cap" id="monthlyCap">월별 수수료(매출) · 계약일 기준</div></div>
+          <div><h3>월별 누적 비교 (같은 시점)</h3><div class="cap" id="monthlyCap">각 달 1일부터 누적 매출 · 같은 일자에서 비교</div></div>
           <div class="toggle">
             <button class="preset" data-range="6m">6개월</button>
             <button class="preset" data-range="12m">12개월</button>
@@ -388,11 +388,11 @@
   </div>
 </div>
 
-<script src="metrics.js?v=11"></script>
+<script src="metrics.js?v=12"></script>
 <script type="module">
-  import { OrderStore, SyncState } from './idb-sync.js?v=11';
-  import { MisoClient } from './miso-api.js?v=11';
-  import { buildSheet, sortOrders } from './miso-sheets.js?v=11';
+  import { OrderStore, SyncState } from './idb-sync.js?v=12';
+  import { MisoClient } from './miso-api.js?v=12';
+  import { buildSheet, sortOrders } from './miso-sheets.js?v=12';
   window.misoMetrics = globalThis.MisoMetrics;
   window.misoSyncState = SyncState;
   window.misoSheets = { buildSheet, sortOrders };
@@ -793,27 +793,44 @@
 
   function renderMonthly(data) {
     const c = data.commission; if (!c) return;
-    const ms = c.months || [];
-    $('monthlyCap').textContent = (ms.length ? ms[0] + ' ~ ' + ms[ms.length - 1] : (c.start + ' ~ ' + c.end))
-      + ' · 월별 수수료(매출) · 6/12개월 버튼으로 기간 확장';
+    const n = (c.monthsCum || []).length;
+    $('monthlyCap').textContent = '각 달 1일부터 누적 매출 · ' + (c.compareDom || '') + '일 시점 비교 · 굵은선=이번 달, 점선=과거 달'
+      + (n <= 1 ? ' · 6/12개월 버튼으로 여러 달 비교' : ' · ' + n + '개월');
     buildMonthly();
   }
 
   function buildMonthly() {
-    if (!lastData || !lastData.commission || !lastData.commission.months) return;
-    const c = lastData.commission;
+    if (!lastData || !lastData.commission || !lastData.commission.monthsCum) return;
+    const c = lastData.commission, mc = c.monthsCum, dom = c.compareDom;
+    const labels = Array.from({ length: 31 }, (_, i) => i + 1);
+    const palette = ['#3b82f6', '#22c55e', '#f59e0b', '#a855f7', '#06b6d4', '#ef4444', '#ec4899', '#8a94ad'];
     if (chMonthly) { chMonthly.destroy(); chMonthly = null; }
-    const ctx = $('chMonthly').getContext('2d');
-    const grad = ctx.createLinearGradient(0, 0, 0, 280);
-    grad.addColorStop(0, 'rgba(99,102,241,.28)'); grad.addColorStop(1, 'rgba(99,102,241,0)');
-    chMonthly = new Chart(ctx, {
+    const datasets = mc.map((m, idx) => {
+      const isCurrent = idx === mc.length - 1;
+      const at = m.cum[Math.min(dom, 31) - 1];
+      const mlabel = Number(m.month.slice(5, 7)) + '월';
+      return {
+        label: mlabel + ' (' + dom + '일 ' + (at == null ? '–' : Math.round(at / 1e4).toLocaleString() + '만') + ')',
+        data: m.cum,
+        borderColor: isCurrent ? C.indigo : palette[idx % palette.length],
+        backgroundColor: isCurrent ? 'rgba(99,102,241,.12)' : 'transparent',
+        fill: isCurrent,
+        borderWidth: isCurrent ? 3 : 1.6,
+        borderDash: isCurrent ? [] : [4, 4],
+        tension: .3, pointRadius: 0, pointHoverRadius: 4,
+      };
+    });
+    chMonthly = new Chart($('chMonthly').getContext('2d'), {
       type: 'line',
-      data: { labels: c.months, datasets: [{ label: '월 매출', data: c.byMonth, borderColor: C.indigo, backgroundColor: grad, fill: true, tension: .35, borderWidth: 2.5, pointRadius: 3, pointHoverRadius: 5 }] },
+      data: { labels, datasets },
       options: {
         responsive: true, maintainAspectRatio: false, interaction: { mode: 'index', intersect: false },
-        plugins: { legend: { display: false }, tooltip: { callbacks: { label: (x) => Number(x.parsed.y).toLocaleString() + '원' } } },
+        plugins: {
+          legend: { position: 'top', align: 'start', labels: { boxWidth: 18, padding: 10 } },
+          tooltip: { callbacks: { label: (x) => x.dataset.label.split(' ')[0] + ' ' + x.label + '일: ' + (x.parsed.y == null ? '–' : Number(x.parsed.y).toLocaleString() + '원') } },
+        },
         scales: {
-          x: { grid: { display: false } },
+          x: { grid: { display: false }, title: { display: true, text: '일 (day of month)' }, ticks: { maxTicksLimit: 16 } },
           y: { beginAtZero: true, grid: { color: '#f0f2f8' }, ticks: { callback: (v) => (v >= 1e4 ? Math.round(v / 1e4) + '만' : v) } },
         },
       },
@@ -1063,6 +1080,6 @@
   window.addEventListener('idb-ready', startApp);
   if (window.getMisoClient) startApp();
 </script>
-<script src="/pwa-register.js?v=11"></script>
+<script src="/pwa-register.js?v=12"></script>
 </body>
 </html>

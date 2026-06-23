@@ -149,12 +149,28 @@ function buildDashboardFromOrders(qualified, ctx, serviceId, meta) {
     }
   }
   const commByMonth = new Array(months.length).fill(0);
+  const domMap = {}; // 'YYYY-MM' -> [32] (day-of-month 일별 매출)
   for (const o of qualified) {
     if (o.commissionFee == null || !o.paymentYmd) continue;
     if (!inRange(o.paymentYmd, rangeStart, rangeEnd)) continue;
-    const i = monthPos[o.paymentYmd.slice(0, 7)];
-    if (i !== undefined) commByMonth[i] += o.commissionFee;
+    const mk = o.paymentYmd.slice(0, 7);
+    const i = monthPos[mk];
+    if (i === undefined) continue;
+    commByMonth[i] += o.commissionFee;
+    const dd = Number(o.paymentYmd.slice(8, 10));
+    (domMap[mk] || (domMap[mk] = new Array(32).fill(0)))[dd] += o.commissionFee;
   }
+  // 같은 시점(일) 비교 — 각 달 1일부터 누적. 마지막(현재) 달은 비교일까지만, 그 외는 말일까지.
+  const compareDom = Number(rangeEnd.slice(8, 10));
+  const lastMonthKey = rangeEnd.slice(0, 7);
+  const monthsCum = months.map((mk) => {
+    const daily = domMap[mk] || new Array(32).fill(0);
+    const [yy, mo2] = mk.split('-').map(Number);
+    const lastDay = (mk === lastMonthKey) ? compareDom : new Date(Date.UTC(yy, mo2, 0)).getUTCDate();
+    const cum = []; let s = 0;
+    for (let d = 1; d <= 31; d++) { s += daily[d]; cum.push(d <= lastDay ? s : null); }
+    return { month: mk, cum };
+  });
 
   const nowHour = toSeoulHour(new Date());
   let yesterdaySoFar = 0;
@@ -209,6 +225,7 @@ function buildDashboardFromOrders(qualified, ctx, serviceId, meta) {
       rate: quoteTotal ? commTotal / quoteTotal : null,
       byDay: commByDay,
       months, byMonth: commByMonth,
+      monthsCum, compareDom,
     },
     todayItems: todayContract.map((o) => ({
       id: o.id, phone: o.phone, region: o.region, due_date: o.due_date, paymentAt: o.paymentAt,
