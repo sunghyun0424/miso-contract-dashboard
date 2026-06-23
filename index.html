@@ -375,11 +375,11 @@
   </div>
 </div>
 
-<script src="metrics.js?v=7"></script>
+<script src="metrics.js?v=8"></script>
 <script type="module">
-  import { OrderStore, SyncState } from './idb-sync.js?v=7';
-  import { MisoClient } from './miso-api.js?v=7';
-  import { buildSheet, sortOrders } from './miso-sheets.js?v=7';
+  import { OrderStore, SyncState } from './idb-sync.js?v=8';
+  import { MisoClient } from './miso-api.js?v=8';
+  import { buildSheet, sortOrders } from './miso-sheets.js?v=8';
   window.misoMetrics = globalThis.MisoMetrics;
   window.misoSyncState = SyncState;
   window.misoSheets = { buildSheet, sortOrders };
@@ -721,16 +721,22 @@
     $('daysCap').textContent = r.start + ' ~ ' + r.end + ' 일자별 · 막대 클릭 시 해당 일 상세';
   }
 
-  // 금액 단위 표기
-  function man(n) { return n == null ? '–' : Math.round(Number(n) / 1e4).toLocaleString() + '만원'; }    // 만원 단위
-  function cheon(n) { return n == null ? '–' : Math.round(Number(n) / 1e3).toLocaleString() + '천원'; }   // 1000원 단위
+  // 금액 표기 — 단위: 만원, 큰 값은 억/만원 형태 (예: 2억 1,693만원)
+  function manFmt(n) {
+    if (n == null) return '–';
+    const man = Math.round(Number(n) / 1e4);   // 만원 단위 정수
+    const eok = Math.floor(man / 1e4);         // 1억 = 10,000만
+    const rest = man % 1e4;
+    if (eok > 0) return rest ? (eok.toLocaleString() + '억 ' + rest.toLocaleString() + '만원') : (eok.toLocaleString() + '억원');
+    return man.toLocaleString() + '만원';
+  }
 
   function renderCommission(data) {
     const c = data.commission; if (!c) return;
-    $('cm_total').textContent = cheon(c.total);
-    $('cm_deposit').textContent = man(c.depositTotal);
-    $('cm_quote').textContent = man(c.quoteTotal);
-    $('cm_aov').textContent = c.count ? cheon(c.aov) : '–';
+    $('cm_total').textContent = manFmt(c.total);
+    $('cm_deposit').textContent = manFmt(c.depositTotal);
+    $('cm_quote').textContent = manFmt(c.quoteTotal);
+    $('cm_aov').textContent = c.count ? manFmt(c.aov) : '–';
     $('commCap').textContent = c.start + ' ~ ' + c.end + ' · 계약일 기준 · ' + c.count + '건 · 매출=우리 수수료(commissionFee)';
     buildCommission();
   }
@@ -1001,6 +1007,6 @@
   window.addEventListener('idb-ready', startApp);
   if (window.getMisoClient) startApp();
 </script>
-<script src="/pwa-register.js?v=7"></script>
+<script src="/pwa-register.js?v=8"></script>
 </body>
 </html>

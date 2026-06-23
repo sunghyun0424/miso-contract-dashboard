@@ -1,7 +1,7 @@
 /* eslint-disable no-restricted-globals */
 'use strict';
 
-const VERSION = '20260623b';
+const VERSION = '20260623c';
 const SHELL = 'miso-dashboard-shell-' + VERSION;
 const CDN = 'miso-dashboard-cdn-' + VERSION;
 
