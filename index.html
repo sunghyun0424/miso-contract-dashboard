@@ -342,7 +342,7 @@
           <div class="it"><div class="n" id="cm_total" style="color:var(--indigo)">–</div><div class="l">매출 (수수료)</div></div>
           <div class="it"><div class="n" id="cm_deposit" style="color:var(--green)">–</div><div class="l">계약금 총 합</div></div>
           <div class="it"><div class="n" id="cm_quote" style="color:var(--blue)">–</div><div class="l">거래액 총 합</div></div>
-          <div class="it"><div class="n" id="cm_aov" style="color:var(--amber)">–</div><div class="l">평균 주문 단가 (AOV)</div></div>
+          <div class="it"><div class="n" id="cm_avgfee" style="color:var(--amber)">–</div><div class="l">평균 수수료</div></div>
         </div>
         <div class="chart-wrap sm"><canvas id="chCommission"></canvas></div>
       </div>
@@ -375,11 +375,11 @@
   </div>
 </div>
 
-<script src="metrics.js?v=8"></script>
+<script src="metrics.js?v=9"></script>
 <script type="module">
-  import { OrderStore, SyncState } from './idb-sync.js?v=8';
-  import { MisoClient } from './miso-api.js?v=8';
-  import { buildSheet, sortOrders } from './miso-sheets.js?v=8';
+  import { OrderStore, SyncState } from './idb-sync.js?v=9';
+  import { MisoClient } from './miso-api.js?v=9';
+  import { buildSheet, sortOrders } from './miso-sheets.js?v=9';
   window.misoMetrics = globalThis.MisoMetrics;
   window.misoSyncState = SyncState;
   window.misoSheets = { buildSheet, sortOrders };
@@ -731,12 +731,20 @@
     return man.toLocaleString() + '만원';
   }
 
+  // ~만 ~원 형태 (원 단위까지, 예: 9만 780원)
+  function manWon(n) {
+    if (n == null) return '–';
+    n = Math.round(Number(n));
+    const man = Math.floor(n / 1e4), won = n % 1e4;
+    return man > 0 ? (man.toLocaleString() + '만 ' + won.toLocaleString() + '원') : (won.toLocaleString() + '원');
+  }
+
   function renderCommission(data) {
     const c = data.commission; if (!c) return;
     $('cm_total').textContent = manFmt(c.total);
     $('cm_deposit').textContent = manFmt(c.depositTotal);
     $('cm_quote').textContent = manFmt(c.quoteTotal);
-    $('cm_aov').textContent = c.count ? manFmt(c.aov) : '–';
+    $('cm_avgfee').textContent = c.count ? manWon(c.avg) : '–';
     $('commCap').textContent = c.start + ' ~ ' + c.end + ' · 계약일 기준 · ' + c.count + '건 · 매출=우리 수수료(commissionFee)';
     buildCommission();
   }
@@ -1007,6 +1015,6 @@
   window.addEventListener('idb-ready', startApp);
   if (window.getMisoClient) startApp();
 </script>
-<script src="/pwa-register.js?v=8"></script>
+<script src="/pwa-register.js?v=9"></script>
 </body>
 </html>
