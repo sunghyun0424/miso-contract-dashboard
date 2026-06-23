@@ -55,6 +55,7 @@
 
   /* 메인 */
   .main { flex: 1; padding: 22px 30px 40px; max-width: 1500px; margin: 0 auto; width: 100%; }
+  .main > section { margin-bottom: 22px; }
   .topbar { display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; margin-bottom: 22px; }
   .topbar h1 { font-size: 22px; font-weight: 800; margin: 0; letter-spacing: -.02em; }
   .topbar .sub { color: var(--muted); font-size: 13px; margin-top: 3px; }
@@ -308,10 +309,10 @@
           <input type="date" id="rangeStart" />
           <span class="sep">~</span>
           <input type="date" id="rangeEnd" />
-          <button class="preset" data-range="7">최근 7일</button>
-          <button class="preset" data-range="week">이번 주</button>
-          <button class="preset" data-range="month">이번 달</button>
-          <button class="preset" data-range="30">최근 30일</button>
+          <button class="preset on" data-range="7" data-scope="main">최근 7일</button>
+          <button class="preset" data-range="week" data-scope="main">이번 주</button>
+          <button class="preset" data-range="month" data-scope="main">이번 달</button>
+          <button class="preset" data-range="30" data-scope="main">최근 30일</button>
         </div>
         <div class="summary-chips">
           <div class="it"><div class="n" id="rg_contract" style="color:var(--green)">–</div><div class="l">기간 계약</div></div>
@@ -333,10 +334,17 @@
 
     <!-- 수수료(매출) 관리 -->
     <section>
-      <div class="card drillable" id="cardCommission" data-sheet-tabs='[{"type":"commissionByDay","label":"일자별 수수료"},{"type":"commissionOrders","label":"계약별 내역"}]'>
+      <div class="card drillable" id="cardCommission" data-scope="comm" data-sheet-tabs='[{"type":"commissionByDay","label":"일자별 수수료"},{"type":"commissionOrders","label":"계약별 내역"}]'>
         <div class="card-head">
           <div><h3>수수료(매출) 관리</h3><div class="cap" id="commCap">선택 기간 · 계약일 기준 · 우리 수수료(commissionFee)</div></div>
-          <div class="cap" style="text-align:right">위 ‘기간별’ 카드의 기간과 연동 · 클릭 시 상세</div>
+          <div class="ctl">
+            <input type="date" id="commStart" />
+            <span class="sep">~</span>
+            <input type="date" id="commEnd" />
+            <button class="preset on" data-range="cmonth" data-scope="comm">이번 달</button>
+            <button class="preset" data-range="c30" data-scope="comm">최근 30일</button>
+            <button class="preset" data-range="c7" data-scope="comm">최근 7일</button>
+          </div>
         </div>
         <div class="summary-chips">
           <div class="it"><div class="n" id="cm_total" style="color:var(--indigo)">–</div><div class="l">매출 (수수료)</div></div>
@@ -349,12 +357,13 @@
 
     <!-- 월별 매출 추이 -->
     <section>
-      <div class="card drillable" id="cardMonthly" data-sheet-tabs='[{"type":"commissionByDay","label":"일자별 수수료"},{"type":"commissionOrders","label":"계약별 내역"}]'>
+      <div class="card drillable" id="cardMonthly" data-scope="month" data-sheet-tabs='[{"type":"commissionByDay","label":"일자별 수수료"},{"type":"commissionOrders","label":"계약별 내역"}]'>
         <div class="card-head">
           <div><h3>월별 누적 비교 (같은 시점)</h3><div class="cap" id="monthlyCap">각 달 1일부터 누적 매출 · 같은 일자에서 비교</div></div>
           <div class="toggle">
-            <button class="preset" data-range="6m">6개월</button>
-            <button class="preset" data-range="12m">12개월</button>
+            <button class="preset" data-range="6m" data-scope="month">6개월</button>
+            <button class="preset" data-range="12m" data-scope="month">12개월</button>
+            <button class="preset" data-range="24m" data-scope="month">24개월</button>
           </div>
         </div>
         <div class="chart-wrap"><canvas id="chMonthly"></canvas></div>
@@ -388,11 +397,11 @@
   </div>
 </div>
 
-<script src="metrics.js?v=12"></script>
+<script src="metrics.js?v=13"></script>
 <script type="module">
-  import { OrderStore, SyncState } from './idb-sync.js?v=12';
-  import { MisoClient } from './miso-api.js?v=12';
-  import { buildSheet, sortOrders } from './miso-sheets.js?v=12';
+  import { OrderStore, SyncState } from './idb-sync.js?v=13';
+  import { MisoClient } from './miso-api.js?v=13';
+  import { buildSheet, sortOrders } from './miso-sheets.js?v=13';
   window.misoMetrics = globalThis.MisoMetrics;
   window.misoSyncState = SyncState;
   window.misoSheets = { buildSheet, sortOrders };
@@ -429,6 +438,8 @@
   let timer = null, countdownTimer = null, nextAt = 0, loading = false, refreshing = false;
   let lastData = null, timeMode = 'hourly';
   let chTime = null, chDonut = null, chDays = null, chCommission = null, chMonthly = null;
+  // 대시보드별 독립 기간 — 단일 스캔(합집합) 후 카드마다 자기 기간으로 메모리 재집계
+  let qualifiedOrders = null, lastMeta = null, commData = null, monthData = null, monthlyMonths = 1;
   let appStarted = false;
 
   const C = { indigo:'#6366f1', blue:'#3b82f6', green:'#22c55e', amber:'#f59e0b', grayBar:'#e5e9f2', muted:'#8a94ad' };
@@ -449,12 +460,29 @@
     if (!ts) return '–'; const d = new Date(ts); if (isNaN(d)) return '–';
     return new Intl.DateTimeFormat('ko-KR',{timeZone:'Asia/Seoul',year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',second:'2-digit',hour12:false}).format(d);
   }
-  function dashParams() {
+  function optsMain() { return { dayA: $('dayA').value, dayB: $('dayB').value, rangeStart: $('rangeStart').value, rangeEnd: $('rangeEnd').value }; }
+  function optsComm() { return { rangeStart: $('commStart').value, rangeEnd: $('commEnd').value }; }
+  function optsMonth() { return { rangeStart: monthsAgoFirst(monthlyMonths - 1), rangeEnd: TODAY }; }
+  function ymdMin(...a) { return a.filter((x) => /^\d{4}-\d{2}-\d{2}$/.test(x || '')).reduce((p, c) => (c < p ? c : p)); }
+  function ymdMax(...a) { return a.filter((x) => /^\d{4}-\d{2}-\d{2}$/.test(x || '')).reduce((p, c) => (c > p ? c : p)); }
+  function unionOpts() {
+    const oM = optsMain(), oC = optsComm(), oMo = optsMonth();
     return {
-      serviceId: serviceEl.value,
-      dayA: $('dayA').value, dayB: $('dayB').value,
-      rangeStart: $('rangeStart').value, rangeEnd: $('rangeEnd').value,
+      dayA: oM.dayA, dayB: oM.dayB,
+      rangeStart: ymdMin(oM.rangeStart, oC.rangeStart, oMo.rangeStart),
+      rangeEnd: ymdMax(oM.rangeEnd, oC.rangeEnd, oMo.rangeEnd, TODAY),
     };
+  }
+  // 스캔(데이터 조회)은 모든 카드 기간의 합집합으로 — 한 번 받아 카드별 재집계
+  function dashParams() { return unionOpts(); }
+  function scopeOpts(scope) { return scope === 'comm' ? optsComm() : scope === 'month' ? optsMonth() : optsMain(); }
+  function buildFor(opts) {
+    return window.misoMetrics.buildDashboardFromOrders(
+      window.misoMetrics.filterQualified(qualifiedOrders),
+      window.misoMetrics.resolveOpts(opts),
+      serviceEl.value,
+      { fromCache: true, generatedAt: (lastMeta && lastMeta.generatedAt) || new Date().toISOString(), excludedUnqualified: (lastMeta && lastMeta.excludedUnqualified) || 0 }
+    );
   }
 
   // ---- 시트 패널 ----
@@ -482,6 +510,7 @@
       dir: cfg.dir || 'asc',
       day: cfg.day || null,
       hour: cfg.hour !== undefined && cfg.hour !== null ? cfg.hour : null,
+      opts: cfg.opts || dashParams(),
     };
     $('sheetOverlay').classList.add('open');
     $('sheetSearch').value = '';
@@ -490,13 +519,14 @@
   }
 
   function openSheetFromEl(el) {
+    const opts = scopeOpts(el.dataset.scope);
     if (el.dataset.sheet) {
-      openSheet({ type: el.dataset.sheet });
+      openSheet({ type: el.dataset.sheet, opts });
       return;
     }
     if (el.dataset.sheetTabs) {
       const tabs = JSON.parse(el.dataset.sheetTabs).map(resolveTab);
-      openSheet({ type: tabs[0].type, tabs, tabIndex: 0, day: tabs[0].day, hour: tabs[0].hour });
+      openSheet({ type: tabs[0].type, tabs, tabIndex: 0, day: tabs[0].day, hour: tabs[0].hour, opts });
     }
   }
 
@@ -523,14 +553,12 @@
   }
 
   async function getSheetQualified() {
-    const client = window.getMisoClient(userEl.value.trim(), pwEl.value, serviceEl.value);
-    if (client.lastQualified?.length) return client.lastQualified;
+    if (qualifiedOrders && qualifiedOrders.length) return qualifiedOrders;
     if (!window.getOrderStore) return null;
-    const store = window.getOrderStore(serviceEl.value);
-    const cached = await store.hydrateFresh();
+    const cached = await window.getOrderStore(serviceEl.value).hydrateFresh();
     if (!cached.length) return null;
-    client.seedPaymentCacheFromOrders(cached);
-    return client.setQualifiedFromOrders(cached, dashParams());
+    qualifiedOrders = cached;
+    return qualifiedOrders;
   }
 
   async function fetchSheet() {
@@ -542,7 +570,7 @@
         $('sheetBody').innerHTML = '<tr><td colspan="8" class="empty">데이터가 없습니다. 먼저 갱신하세요.</td></tr>';
         return;
       }
-      const ctx = window.misoMetrics.resolveOpts(dashParams());
+      const ctx = window.misoMetrics.resolveOpts(sheetState.opts || dashParams());
       let data = window.misoSheets.buildSheet(sheetState.type, { qualified, context: ctx }, {
         day: sheetState.day,
         hour: sheetState.hour,
@@ -617,7 +645,7 @@
     const el = elems[0];
     const hour = el.index;
     const day = el.datasetIndex === 0 ? lastData.timetable.dayA : lastData.timetable.dayB;
-    openSheet({ type: 'timetableOrders', day, hour, tabs: [
+    openSheet({ type: 'timetableOrders', day, hour, opts: optsMain(), tabs: [
       { type: 'hourlySummary', label: '시간대 요약' },
       { type: 'timetableOrders', label: day + ' ' + hour + '시', day, hour },
     ], tabIndex: 1 });
@@ -628,7 +656,7 @@
     const el = elems[0];
     const day = lastData.range.days[el.index];
     const isContract = el.datasetIndex === 0;
-    openSheet({ type: isContract ? 'dayContracts' : 'dayLeads', day, tabs: [
+    openSheet({ type: isContract ? 'dayContracts' : 'dayLeads', day, opts: optsMain(), tabs: [
       { type: 'dailySummary', label: '일자 요약' },
       { type: 'dayContracts', label: day + ' 계약', day },
       { type: 'dayLeads', label: day + ' 접수', day },
@@ -762,8 +790,8 @@
   }
 
   function buildCommission() {
-    if (!lastData || !lastData.commission) return;
-    const c = lastData.commission, r = lastData.range;
+    if (!commData || !commData.commission) return;
+    const c = commData.commission, r = commData.range;
     const labels = r.days.map((d) => d.slice(5));
     if (chCommission) { chCommission.destroy(); chCommission = null; }
     chCommission = new Chart($('chCommission').getContext('2d'), {
@@ -783,9 +811,9 @@
   }
 
   function onChartClickCommission(_ev, elems) {
-    if (!elems.length || !lastData) return;
-    const day = lastData.range.days[elems[0].index];
-    openSheet({ type: 'commissionOrders', day, tabs: [
+    if (!elems.length || !commData) return;
+    const day = commData.range.days[elems[0].index];
+    openSheet({ type: 'commissionOrders', day, opts: optsComm(), tabs: [
       { type: 'commissionByDay', label: '일자별 수수료' },
       { type: 'commissionOrders', label: day + ' 수수료', day },
     ], tabIndex: 1 });
@@ -800,8 +828,8 @@
   }
 
   function buildMonthly() {
-    if (!lastData || !lastData.commission || !lastData.commission.monthsCum) return;
-    const c = lastData.commission, mc = c.monthsCum, dom = c.compareDom;
+    if (!monthData || !monthData.commission || !monthData.commission.monthsCum) return;
+    const c = monthData.commission, mc = c.monthsCum, dom = c.compareDom;
     const labels = Array.from({ length: 31 }, (_, i) => i + 1);
     const palette = ['#3b82f6', '#22c55e', '#f59e0b', '#a855f7', '#06b6d4', '#ef4444', '#ec4899', '#8a94ad'];
     if (chMonthly) { chMonthly.destroy(); chMonthly = null; }
@@ -844,16 +872,17 @@
     el.textContent = arrow + ' ' + (diff>0?'+':'') + diff + (suffix||'');
   }
 
-  function renderAll(data) {
-    lastData = data;
-    const m = data.metrics, d = data.dates;
+  function renderAll() {
+    if (!qualifiedOrders || !qualifiedOrders.length) return;
+    lastData = buildFor(optsMain());
+    const m = lastData.metrics, d = lastData.dates;
 
     $('m_todayContract').textContent = m.todayContract;
     $('m_yLead').textContent = m.yesterdayLeadIn;
     $('m_yRate').textContent = pct(m.yesterdayRate);
     $('m_r7').textContent = pct(m.rate7d);
 
-    // 오늘 vs 어제 같은 시간 페이스 (서버 계산)
+    // 오늘 vs 어제 같은 시간 페이스
     const diff = m.todayContract - m.yesterdaySoFar;
     setDelta($('d_today'), diff, '건 (어제 같은 시간 ' + m.yesterdaySoFar + '건)');
 
@@ -861,11 +890,14 @@
     $('d_yRate').textContent = '오늘 계약 ' + m.todayContract + ' / 어제 접수 ' + m.yesterdayLeadIn;
     $('d_r7').textContent = '7일 계약 ' + m.contract7d + ' / 접수 ' + m.leadIn7d;
 
-    $('subInfo').textContent = '미소방문이사 (' + data.serviceId + ') · 접수=생성일, 계약=결제 일시 · unqualified 제외 · 스캔 ' + data.scanned + '건'
-      + (data.excludedUnqualified ? ' (제외 ' + data.excludedUnqualified + '건)' : '');
+    $('subInfo').textContent = '미소방문이사 (' + lastData.serviceId + ') · 접수=생성일, 계약=결제 일시 · unqualified 제외 · 스캔 ' + lastData.scanned + '건'
+      + (lastData.excludedUnqualified ? ' (제외 ' + lastData.excludedUnqualified + '건)' : '');
 
-    buildTimetable(); buildDonut(); buildDays(); renderCommission(data); renderMonthly(data);
-    renderTodayRows(data.todayItems);
+    buildTimetable(); buildDonut(); buildDays();
+    renderTodayRows(lastData.todayItems);
+
+    commData = buildFor(optsComm()); renderCommission(commData);
+    monthData = buildFor(optsMonth()); renderMonthly(monthData);
   }
 
   let loadStartedAt = 0, loadTickTimer = null;
@@ -884,45 +916,26 @@
   }
   async function hydrateFromIdb() {
     if (!window.misoMetrics || !window.getOrderStore) return false;
-    const store = window.getOrderStore(serviceEl.value);
-    const cached = await store.hydrateFresh();
+    const cached = await window.getOrderStore(serviceEl.value).hydrateFresh();
     if (!cached.length) return false;
-    const user = userEl.value.trim(), pw = pwEl.value;
-    if (user && pw && window.getMisoClient) {
-      const client = window.getMisoClient(user, pw, serviceEl.value);
-      client.seedPaymentCacheFromOrders(cached);
-      client.setQualifiedFromOrders(cached, dashParams());
-    }
-    const ctx = window.misoMetrics.resolveOpts(dashParams());
-    const data = window.misoMetrics.buildDashboardFromOrders(
-      window.misoMetrics.filterQualified(cached), ctx, serviceEl.value,
-      { fromCache: true, generatedAt: new Date().toISOString() }
-    );
-    renderAll(data);
-    setStatus('live', '로컬 캐시 · ' + fmt(data.generatedAt));
+    qualifiedOrders = cached;
+    lastMeta = { generatedAt: new Date().toISOString() };
+    renderAll();
+    setStatus('live', '로컬 캐시 · ' + fmt(lastMeta.generatedAt));
     return true;
   }
 
-  async function recomputeFromIdb() {
-    if (!window.misoMetrics || !window.getOrderStore) return false;
-    const store = window.getOrderStore(serviceEl.value);
-    const cached = await store.hydrateFresh();
-    if (!cached.length) return false;
-    const ctx = window.misoMetrics.resolveOpts(dashParams());
-    // 캐시가 선택 기간(fetchStart)을 못 덮으면(과거 날짜 선택 등) 새로 조회하도록 false 반환
-    const minCached = cached.reduce((m, o) => (o.createdYmd && o.createdYmd < m ? o.createdYmd : m), '9999-99-99');
-    if (ctx.fetchStart < minCached) return false;
-    const user = userEl.value.trim(), pw = pwEl.value;
-    if (user && pw && window.getMisoClient) {
-      window.getMisoClient(user, pw, serviceEl.value).setQualifiedFromOrders(cached, dashParams());
+  // 카드 기간 변경: 현재 스캔이 합집합 기간을 덮으면 메모리 재집계, 아니면 더 깊게 조회
+  async function onCardChange() {
+    if (!qualifiedOrders || !qualifiedOrders.length) {
+      if (!(await hydrateFromIdb())) { load(false, { show: true }); }
+      return;
     }
-    const data = window.misoMetrics.buildDashboardFromOrders(
-      window.misoMetrics.filterQualified(cached), ctx, serviceEl.value,
-      { fromCache: true, generatedAt: new Date().toISOString() }
-    );
-    renderAll(data);
-    setStatus('live', '로컬 재집계 · ' + fmt(data.generatedAt));
-    return true;
+    const ctx = window.misoMetrics.resolveOpts(unionOpts());
+    const minC = qualifiedOrders.reduce((m, o) => (o.createdYmd && o.createdYmd < m ? o.createdYmd : m), '9999-99-99');
+    if (ctx.fetchStart < minC) { load(false, { show: true }); return; }
+    renderAll();
+    setStatus('live', '로컬 재집계 · ' + fmt((lastMeta && lastMeta.generatedAt) || new Date().toISOString()));
   }
 
   async function load(force, options = {}) {
@@ -957,7 +970,9 @@
       if (data.orders?.length && window.getOrderStore) {
         await window.getOrderStore(serviceEl.value).mergeOrders(data.orders);
       }
-      renderAll(data);
+      qualifiedOrders = client.lastQualified || data.orders;
+      lastMeta = { generatedAt: data.generatedAt, excludedUnqualified: data.excludedUnqualified };
+      renderAll();
       clearError();
       setStatus('live', (data.fromCache ? '로컬 캐시 · ' : '최근 갱신: ') + fmt(data.generatedAt));
     } catch (e) {
@@ -1028,32 +1043,47 @@
   $('dayB').value = shiftYmd(TODAY, -1);
   $('rangeStart').value = shiftYmd(TODAY, -6);
   $('rangeEnd').value = TODAY;
+  $('commStart').value = TODAY.slice(0, 8) + '01';   // 수수료 기본: 이번 달
+  $('commEnd').value = TODAY;
 
-  function applyRangePreset(kind) {
-    let start = TODAY, end = TODAY;
-    if (kind === '7') start = shiftYmd(TODAY, -6);
-    else if (kind === '30') start = shiftYmd(TODAY, -29);
-    else if (kind === 'week') start = shiftYmd(TODAY, -mondayIdx(TODAY));
-    else if (kind === 'month') start = TODAY.slice(0,8) + '01';
-    else if (kind === '6m') start = monthsAgoFirst(5);
-    else if (kind === '12m') start = monthsAgoFirst(11);
-    $('rangeStart').value = start; $('rangeEnd').value = end;
-    document.querySelectorAll('.preset[data-range]').forEach((b) => b.classList.toggle('on', b.dataset.range===kind));
-    recomputeFromIdb().then((ok) => { if (!ok) load(false, { show: true }); });
+  function applyRangePreset(kind, scope) {
+    if (scope === 'comm') {
+      let s = TODAY;
+      if (kind === 'c7') s = shiftYmd(TODAY, -6);
+      else if (kind === 'c30') s = shiftYmd(TODAY, -29);
+      else if (kind === 'cmonth') s = TODAY.slice(0, 8) + '01';
+      $('commStart').value = s; $('commEnd').value = TODAY;
+    } else if (scope === 'month') {
+      monthlyMonths = kind === '12m' ? 12 : kind === '24m' ? 24 : 6;
+    } else {
+      let s = TODAY;
+      if (kind === '7') s = shiftYmd(TODAY, -6);
+      else if (kind === '30') s = shiftYmd(TODAY, -29);
+      else if (kind === 'week') s = shiftYmd(TODAY, -mondayIdx(TODAY));
+      else if (kind === 'month') s = TODAY.slice(0, 8) + '01';
+      $('rangeStart').value = s; $('rangeEnd').value = TODAY;
+    }
+    onCardChange();
   }
 
+  const clearOn = (sel) => document.querySelectorAll(sel).forEach((b) => b.classList.remove('on'));
   $('reloadBtn').onclick = () => load(false);
   $('settingsBtn').onclick = () => toggleSettings();
   $('applyBtn').onclick = () => { load(false); toggleSettings(false); };
   $('forceBtn').onclick = () => load(true);
   $('tg_hourly').onclick = () => setMode('hourly');
   $('tg_cum').onclick = () => setMode('cumulative');
-  $('dayA').onchange = async () => { if (!(await recomputeFromIdb())) load(false, { show: true }); };
-  $('dayB').onchange = async () => { if (!(await recomputeFromIdb())) load(false, { show: true }); };
-  $('ttToday').onclick = async () => { $('dayA').value = TODAY; $('dayB').value = shiftYmd(TODAY,-1); if (!(await recomputeFromIdb())) load(false, { show: true }); };
-  $('rangeStart').onchange = async () => { document.querySelectorAll('.preset[data-range]').forEach((b)=>b.classList.remove('on')); if (!(await recomputeFromIdb())) load(false, { show: true }); };
-  $('rangeEnd').onchange = async () => { document.querySelectorAll('.preset[data-range]').forEach((b)=>b.classList.remove('on')); if (!(await recomputeFromIdb())) load(false, { show: true }); };
-  document.querySelectorAll('.preset[data-range]').forEach((b) => b.onclick = () => applyRangePreset(b.dataset.range));
+  $('dayA').onchange = onCardChange;
+  $('dayB').onchange = onCardChange;
+  $('ttToday').onclick = () => { $('dayA').value = TODAY; $('dayB').value = shiftYmd(TODAY,-1); onCardChange(); };
+  $('rangeStart').onchange = () => { clearOn('#cardDays .preset[data-range]'); onCardChange(); };
+  $('rangeEnd').onchange = () => { clearOn('#cardDays .preset[data-range]'); onCardChange(); };
+  $('commStart').onchange = () => { clearOn('#cardCommission .preset[data-range]'); onCardChange(); };
+  $('commEnd').onchange = () => { clearOn('#cardCommission .preset[data-range]'); onCardChange(); };
+  document.querySelectorAll('.preset[data-range]').forEach((b) => b.onclick = () => {
+    [...b.parentElement.querySelectorAll('.preset[data-range]')].forEach((x) => x.classList.toggle('on', x === b));
+    applyRangePreset(b.dataset.range, b.dataset.scope);
+  });
   intervalEl.onchange = scheduleNext;
 
   // 시트: 클릭 매핑
@@ -1080,6 +1110,6 @@
   window.addEventListener('idb-ready', startApp);
   if (window.getMisoClient) startApp();
 </script>
-<script src="/pwa-register.js?v=12"></script>
+<script src="/pwa-register.js?v=13"></script>
 </body>
 </html>
