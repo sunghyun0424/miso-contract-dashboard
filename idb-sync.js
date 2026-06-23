@@ -87,6 +87,11 @@ export class OrderStore {
         createdYmd: o.createdYmd || null,
         paymentAt: o.paymentAt || null,
         paymentYmd: o.paymentYmd || null,
+        quotePrice: o.quotePrice ?? null,
+        commissionFee: o.commissionFee ?? null,
+        depositAmount: o.depositAmount ?? null,
+        partnerPayout: o.partnerPayout ?? null,
+        remainingBalance: o.remainingBalance ?? null,
         paymentFetched: o.paymentAt !== undefined,
         state: o.paymentAt ? OrderState.PAYMENT_OK : OrderState.PAYMENT_NONE,
         updatedAt: now,
@@ -129,6 +134,11 @@ export class OrderStore {
       createdYmd: r.createdYmd,
       paymentAt: r.paymentAt,
       paymentYmd: r.paymentYmd,
+      quotePrice: r.quotePrice ?? null,
+      commissionFee: r.commissionFee ?? null,
+      depositAmount: r.depositAmount ?? null,
+      partnerPayout: r.partnerPayout ?? null,
+      remainingBalance: r.remainingBalance ?? null,
     }));
   }
 

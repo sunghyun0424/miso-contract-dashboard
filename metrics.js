@@ -119,6 +119,22 @@ function buildDashboardFromOrders(qualified, ctx, serviceId, meta) {
   }
   const rangeContract = contractByDay.reduce((a, b) => a + b, 0);
   const rangeLead = leadByDay.reduce((a, b) => a + b, 0);
+
+  // 수수료(매출) — 선택 기간, 계약일(paymentYmd) 기준. commissionFee = 우리 수수료.
+  const dayPos = {};
+  days.forEach((d, i) => { dayPos[d] = i; });
+  const commByDay = new Array(days.length).fill(0);
+  let commTotal = 0, commCount = 0, quoteTotal = 0;
+  for (const o of qualified) {
+    if (o.commissionFee == null) continue;
+    const i = dayPos[o.paymentYmd];
+    if (i === undefined) continue;
+    commByDay[i] += o.commissionFee;
+    commTotal += o.commissionFee;
+    commCount += 1;
+    if (o.quotePrice != null) quoteTotal += o.quotePrice;
+  }
+
   const nowHour = toSeoulHour(new Date());
   let yesterdaySoFar = 0;
   for (const o of qualified) {
@@ -162,6 +178,13 @@ function buildDashboardFromOrders(qualified, ctx, serviceId, meta) {
       contractTotal: rangeContract,
       leadTotal: rangeLead,
       rate: rate(rangeContract, rangeLead),
+    },
+    commission: {
+      start: rangeStart, end: rangeEnd,
+      total: commTotal, count: commCount,
+      avg: commCount ? Math.round(commTotal / commCount) : 0,
+      quoteTotal, rate: quoteTotal ? commTotal / quoteTotal : null,
+      byDay: commByDay,
     },
     todayItems: todayContract.map((o) => ({
       id: o.id, phone: o.phone, region: o.region, due_date: o.due_date, paymentAt: o.paymentAt,

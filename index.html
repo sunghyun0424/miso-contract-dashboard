@@ -330,6 +330,23 @@
         </div>
       </div>
     </section>
+
+    <!-- 수수료(매출) 관리 -->
+    <section>
+      <div class="card drillable" id="cardCommission" data-sheet-tabs='[{"type":"commissionByDay","label":"일자별 수수료"},{"type":"commissionOrders","label":"계약별 내역"}]'>
+        <div class="card-head">
+          <div><h3>수수료(매출) 관리</h3><div class="cap" id="commCap">선택 기간 · 계약일 기준 · 우리 수수료(commissionFee)</div></div>
+          <div class="cap" style="text-align:right">위 ‘기간별’ 카드의 기간과 연동 · 클릭 시 상세</div>
+        </div>
+        <div class="summary-chips">
+          <div class="it"><div class="n" id="cm_total" style="color:var(--indigo)">–</div><div class="l">기간 총 수수료</div></div>
+          <div class="it"><div class="n" id="cm_avg" style="color:var(--text)">–</div><div class="l">건당 평균 수수료</div></div>
+          <div class="it"><div class="n" id="cm_rate" style="color:var(--amber)">–<span style="font-size:13px">%</span></div><div class="l">평균 수수료율</div></div>
+          <div class="it"><div class="n" id="cm_quote" style="color:var(--blue)">–</div><div class="l">견적 합계(거래액)</div></div>
+        </div>
+        <div class="chart-wrap sm"><canvas id="chCommission"></canvas></div>
+      </div>
+    </section>
   </main>
 </div>
 
@@ -358,11 +375,11 @@
   </div>
 </div>
 
-<script src="metrics.js?v=5"></script>
+<script src="metrics.js?v=6"></script>
 <script type="module">
-  import { OrderStore, SyncState } from './idb-sync.js?v=5';
-  import { MisoClient } from './miso-api.js?v=5';
-  import { buildSheet, sortOrders } from './miso-sheets.js?v=5';
+  import { OrderStore, SyncState } from './idb-sync.js?v=6';
+  import { MisoClient } from './miso-api.js?v=6';
+  import { buildSheet, sortOrders } from './miso-sheets.js?v=6';
   window.misoMetrics = globalThis.MisoMetrics;
   window.misoSyncState = SyncState;
   window.misoSheets = { buildSheet, sortOrders };
@@ -398,7 +415,7 @@
 
   let timer = null, countdownTimer = null, nextAt = 0, loading = false, refreshing = false;
   let lastData = null, timeMode = 'hourly';
-  let chTime = null, chDonut = null, chDays = null;
+  let chTime = null, chDonut = null, chDays = null, chCommission = null;
   let appStarted = false;
 
   const C = { indigo:'#6366f1', blue:'#3b82f6', green:'#22c55e', amber:'#f59e0b', grayBar:'#e5e9f2', muted:'#8a94ad' };
@@ -557,6 +574,7 @@
           let v = row[c.key];
           if (c.key === 'id') return '<td>' + reqLink(v) + '</td>';
           if (c.key === 'created_at' || c.key === 'paymentAt') v = fmtFull(v);
+          else if (c.won && v != null && v !== '') v = Number(v).toLocaleString();
           return '<td>' + (v == null || v === '' ? '–' : v) + '</td>';
         }).join('') + '</tr>'
       ).join('');
@@ -703,6 +721,54 @@
     $('daysCap').textContent = r.start + ' ~ ' + r.end + ' 일자별 · 막대 클릭 시 해당 일 상세';
   }
 
+  // 금액 축약 표기 (만원/억원)
+  function wonK(n) {
+    if (n == null) return '–'; n = Number(n);
+    if (n >= 1e8) return (Math.round(n / 1e7) / 10).toLocaleString() + '억원';
+    if (n >= 1e4) return Math.round(n / 1e4).toLocaleString() + '만원';
+    return n.toLocaleString() + '원';
+  }
+
+  function renderCommission(data) {
+    const c = data.commission; if (!c) return;
+    $('cm_total').textContent = wonK(c.total);
+    $('cm_avg').textContent = c.count ? wonK(c.avg) : '–';
+    $('cm_rate').innerHTML = (c.rate == null ? '–' : pct(c.rate)) + '<span style="font-size:13px">%</span>';
+    $('cm_quote').textContent = wonK(c.quoteTotal);
+    $('commCap').textContent = c.start + ' ~ ' + c.end + ' · 계약일 기준 · ' + c.count + '건 · 우리 수수료(commissionFee)';
+    buildCommission();
+  }
+
+  function buildCommission() {
+    if (!lastData || !lastData.commission) return;
+    const c = lastData.commission, r = lastData.range;
+    const labels = r.days.map((d) => d.slice(5));
+    if (chCommission) { chCommission.destroy(); chCommission = null; }
+    chCommission = new Chart($('chCommission').getContext('2d'), {
+      type: 'bar',
+      data: { labels, datasets: [{ label: '수수료', data: c.byDay, backgroundColor: C.indigo, borderRadius: 5, maxBarThickness: 22 }] },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        interaction: { mode: 'index', intersect: false },
+        plugins: { legend: { display: false }, tooltip: { callbacks: { label: (x) => Number(x.parsed.y).toLocaleString() + '원' } } },
+        scales: {
+          x: { grid: { display: false }, ticks: { maxRotation: 0, autoSkip: true, maxTicksLimit: 12 } },
+          y: { beginAtZero: true, grid: { color: '#f0f2f8' }, ticks: { callback: (v) => (v >= 1e4 ? Math.round(v / 1e4) + '만' : v) } },
+        },
+        onClick: onChartClickCommission,
+      },
+    });
+  }
+
+  function onChartClickCommission(_ev, elems) {
+    if (!elems.length || !lastData) return;
+    const day = lastData.range.days[elems[0].index];
+    openSheet({ type: 'commissionOrders', day, tabs: [
+      { type: 'commissionByDay', label: '일자별 수수료' },
+      { type: 'commissionOrders', label: day + ' 수수료', day },
+    ], tabIndex: 1 });
+  }
+
   function setDelta(el, diff, suffix) {
     const cls = diff > 0 ? 'up' : (diff < 0 ? 'down' : 'flat');
     const arrow = diff > 0 ? '▲' : (diff < 0 ? '▼' : '–');
@@ -730,7 +796,7 @@
     $('subInfo').textContent = '미소방문이사 (' + data.serviceId + ') · 접수=생성일, 계약=결제 일시 · unqualified 제외 · 스캔 ' + data.scanned + '건'
       + (data.excludedUnqualified ? ' (제외 ' + data.excludedUnqualified + '건)' : '');
 
-    buildTimetable(); buildDonut(); buildDays();
+    buildTimetable(); buildDonut(); buildDays(); renderCommission(data);
     renderTodayRows(data.todayItems);
   }
 
@@ -939,6 +1005,6 @@
   window.addEventListener('idb-ready', startApp);
   if (window.getMisoClient) startApp();
 </script>
-<script src="/pwa-register.js?v=5"></script>
+<script src="/pwa-register.js?v=6"></script>
 </body>
 </html>

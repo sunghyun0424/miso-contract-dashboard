@@ -69,6 +69,23 @@ function regionText(req) {
   return r.name || r.display_name || '';
 }
 
+// 선택된 견적(extras)에서 결제/수수료 정보를 추출한다. (목록 응답에 포함됨 — 추가 호출 불필요)
+// commissionFee = 우리 수수료(매출). quotePrice=거래액, partnerPayout=파트너정산, remainingBalance=잔금.
+function paymentInfo(req) {
+  const sid = req.selected_quote_id;
+  const q = sid ? (req.quotes || []).find((x) => x && x.id === sid) : null;
+  const ex = (q && q.extras) || {};
+  const pd = (ex && ex.paymentDetail) || {};
+  const pick = (k) => (ex[k] != null ? ex[k] : (pd[k] != null ? pd[k] : null));
+  return {
+    quotePrice: pick('quotePrice'),
+    commissionFee: pick('commissionFee'),
+    depositAmount: pick('depositAmount'),
+    partnerPayout: pick('partnerPayout'),
+    remainingBalance: pick('remainingBalance'),
+  };
+}
+
 export class MisoClient {
   constructor(username, password, serviceId) {
     this.username = username;
@@ -151,6 +168,7 @@ export class MisoClient {
           createdYmd,
           paymentAt,
           paymentYmd: metrics().toSeoulDate(paymentAt),
+          ...paymentInfo(req),
         };
       });
       const qualified = enriched.filter((o) => !EXCLUDED_STATUSES.includes(o.status));
@@ -195,6 +213,8 @@ export class MisoClient {
       id: o.id, status: o.status, phone: o.phone, region: o.region,
       due_date: o.due_date, created_at: o.created_at, createdYmd: o.createdYmd,
       paymentAt: o.paymentAt, paymentYmd: o.paymentYmd,
+      quotePrice: o.quotePrice, commissionFee: o.commissionFee,
+      depositAmount: o.depositAmount, partnerPayout: o.partnerPayout, remainingBalance: o.remainingBalance,
     }));
     return dashboard;
   }
