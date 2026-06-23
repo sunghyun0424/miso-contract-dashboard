@@ -180,7 +180,7 @@ export function buildSheet(type, data, params) {
       subtitle: span + ' · 계약일 기준 · 총 수수료 ' + cTotal.toLocaleString() + '원 · 견적합 ' + qTotal.toLocaleString() + '원 · ' + rows.length + '건',
       total: rows.length,
       columns: [
-        { key: 'paymentYmd', label: '계약일' },
+        { key: 'paymentAt', label: '계약일시' },
         { key: 'id', label: '주문 ID' },
         { key: 'quotePrice', label: '견적금액(원)', won: true },
         { key: 'commissionFee', label: '수수료(원)', won: true },
