@@ -124,7 +124,7 @@ function buildDashboardFromOrders(qualified, ctx, serviceId, meta) {
   const dayPos = {};
   days.forEach((d, i) => { dayPos[d] = i; });
   const commByDay = new Array(days.length).fill(0);
-  let commTotal = 0, commCount = 0, quoteTotal = 0;
+  let commTotal = 0, commCount = 0, quoteTotal = 0, depositTotal = 0;
   for (const o of qualified) {
     if (o.commissionFee == null) continue;
     const i = dayPos[o.paymentYmd];
@@ -133,6 +133,7 @@ function buildDashboardFromOrders(qualified, ctx, serviceId, meta) {
     commTotal += o.commissionFee;
     commCount += 1;
     if (o.quotePrice != null) quoteTotal += o.quotePrice;
+    if (o.depositAmount != null) depositTotal += o.depositAmount;
   }
 
   const nowHour = toSeoulHour(new Date());
@@ -183,7 +184,9 @@ function buildDashboardFromOrders(qualified, ctx, serviceId, meta) {
       start: rangeStart, end: rangeEnd,
       total: commTotal, count: commCount,
       avg: commCount ? Math.round(commTotal / commCount) : 0,
-      quoteTotal, rate: quoteTotal ? commTotal / quoteTotal : null,
+      quoteTotal, depositTotal,
+      aov: commCount ? Math.round(quoteTotal / commCount) : 0,
+      rate: quoteTotal ? commTotal / quoteTotal : null,
       byDay: commByDay,
     },
     todayItems: todayContract.map((o) => ({
