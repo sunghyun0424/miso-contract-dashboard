@@ -346,6 +346,20 @@
         <div class="chart-wrap sm"><canvas id="chCommission"></canvas></div>
       </div>
     </section>
+
+    <!-- 월별 매출 추이 -->
+    <section>
+      <div class="card drillable" id="cardMonthly" data-sheet-tabs='[{"type":"commissionByDay","label":"일자별 수수료"},{"type":"commissionOrders","label":"계약별 내역"}]'>
+        <div class="card-head">
+          <div><h3>월별 매출 추이</h3><div class="cap" id="monthlyCap">월별 수수료(매출) · 계약일 기준</div></div>
+          <div class="toggle">
+            <button class="preset" data-range="6m">6개월</button>
+            <button class="preset" data-range="12m">12개월</button>
+          </div>
+        </div>
+        <div class="chart-wrap"><canvas id="chMonthly"></canvas></div>
+      </div>
+    </section>
   </main>
 </div>
 
@@ -374,11 +388,11 @@
   </div>
 </div>
 
-<script src="metrics.js?v=10"></script>
+<script src="metrics.js?v=11"></script>
 <script type="module">
-  import { OrderStore, SyncState } from './idb-sync.js?v=10';
-  import { MisoClient } from './miso-api.js?v=10';
-  import { buildSheet, sortOrders } from './miso-sheets.js?v=10';
+  import { OrderStore, SyncState } from './idb-sync.js?v=11';
+  import { MisoClient } from './miso-api.js?v=11';
+  import { buildSheet, sortOrders } from './miso-sheets.js?v=11';
   window.misoMetrics = globalThis.MisoMetrics;
   window.misoSyncState = SyncState;
   window.misoSheets = { buildSheet, sortOrders };
@@ -414,7 +428,7 @@
 
   let timer = null, countdownTimer = null, nextAt = 0, loading = false, refreshing = false;
   let lastData = null, timeMode = 'hourly';
-  let chTime = null, chDonut = null, chDays = null, chCommission = null;
+  let chTime = null, chDonut = null, chDays = null, chCommission = null, chMonthly = null;
   let appStarted = false;
 
   const C = { indigo:'#6366f1', blue:'#3b82f6', green:'#22c55e', amber:'#f59e0b', grayBar:'#e5e9f2', muted:'#8a94ad' };
@@ -777,6 +791,35 @@
     ], tabIndex: 1 });
   }
 
+  function renderMonthly(data) {
+    const c = data.commission; if (!c) return;
+    const ms = c.months || [];
+    $('monthlyCap').textContent = (ms.length ? ms[0] + ' ~ ' + ms[ms.length - 1] : (c.start + ' ~ ' + c.end))
+      + ' · 월별 수수료(매출) · 6/12개월 버튼으로 기간 확장';
+    buildMonthly();
+  }
+
+  function buildMonthly() {
+    if (!lastData || !lastData.commission || !lastData.commission.months) return;
+    const c = lastData.commission;
+    if (chMonthly) { chMonthly.destroy(); chMonthly = null; }
+    const ctx = $('chMonthly').getContext('2d');
+    const grad = ctx.createLinearGradient(0, 0, 0, 280);
+    grad.addColorStop(0, 'rgba(99,102,241,.28)'); grad.addColorStop(1, 'rgba(99,102,241,0)');
+    chMonthly = new Chart(ctx, {
+      type: 'line',
+      data: { labels: c.months, datasets: [{ label: '월 매출', data: c.byMonth, borderColor: C.indigo, backgroundColor: grad, fill: true, tension: .35, borderWidth: 2.5, pointRadius: 3, pointHoverRadius: 5 }] },
+      options: {
+        responsive: true, maintainAspectRatio: false, interaction: { mode: 'index', intersect: false },
+        plugins: { legend: { display: false }, tooltip: { callbacks: { label: (x) => Number(x.parsed.y).toLocaleString() + '원' } } },
+        scales: {
+          x: { grid: { display: false } },
+          y: { beginAtZero: true, grid: { color: '#f0f2f8' }, ticks: { callback: (v) => (v >= 1e4 ? Math.round(v / 1e4) + '만' : v) } },
+        },
+      },
+    });
+  }
+
   function setDelta(el, diff, suffix) {
     const cls = diff > 0 ? 'up' : (diff < 0 ? 'down' : 'flat');
     const arrow = diff > 0 ? '▲' : (diff < 0 ? '▼' : '–');
@@ -804,7 +847,7 @@
     $('subInfo').textContent = '미소방문이사 (' + data.serviceId + ') · 접수=생성일, 계약=결제 일시 · unqualified 제외 · 스캔 ' + data.scanned + '건'
       + (data.excludedUnqualified ? ' (제외 ' + data.excludedUnqualified + '건)' : '');
 
-    buildTimetable(); buildDonut(); buildDays(); renderCommission(data);
+    buildTimetable(); buildDonut(); buildDays(); renderCommission(data); renderMonthly(data);
     renderTodayRows(data.todayItems);
   }
 
@@ -956,6 +999,11 @@
     const [y,mo,d] = ymd.split('-').map(Number);
     return (new Date(Date.UTC(y, mo-1, d)).getUTCDay()+6)%7;
   }
+  function monthsAgoFirst(n) {
+    let [y, mo] = TODAY.split('-').map(Number);
+    mo -= n; while (mo <= 0) { mo += 12; y--; }
+    return y + '-' + String(mo).padStart(2, '0') + '-01';
+  }
 
   // 기간 컨트롤 초기값
   const TODAY = seoulYmd();
@@ -970,6 +1018,8 @@
     else if (kind === '30') start = shiftYmd(TODAY, -29);
     else if (kind === 'week') start = shiftYmd(TODAY, -mondayIdx(TODAY));
     else if (kind === 'month') start = TODAY.slice(0,8) + '01';
+    else if (kind === '6m') start = monthsAgoFirst(5);
+    else if (kind === '12m') start = monthsAgoFirst(11);
     $('rangeStart').value = start; $('rangeEnd').value = end;
     document.querySelectorAll('.preset[data-range]').forEach((b) => b.classList.toggle('on', b.dataset.range===kind));
     recomputeFromIdb().then((ok) => { if (!ok) load(false, { show: true }); });
@@ -1013,6 +1063,6 @@
   window.addEventListener('idb-ready', startApp);
   if (window.getMisoClient) startApp();
 </script>
-<script src="/pwa-register.js?v=10"></script>
+<script src="/pwa-register.js?v=11"></script>
 </body>
 </html>

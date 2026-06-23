@@ -136,6 +136,26 @@ function buildDashboardFromOrders(qualified, ctx, serviceId, meta) {
     if (o.depositAmount != null) depositTotal += o.depositAmount;
   }
 
+  // 월별 매출 (계약일 기준, 선택 기간 내 달)
+  const months = []; const monthPos = {};
+  {
+    let [my, mm] = rangeStart.split('-').map(Number);
+    const endKey = rangeEnd.slice(0, 7);
+    for (let guard = 0; guard < 60; guard++) {
+      const key = my + '-' + String(mm).padStart(2, '0');
+      monthPos[key] = months.length; months.push(key);
+      if (key >= endKey) break;
+      mm++; if (mm > 12) { mm = 1; my++; }
+    }
+  }
+  const commByMonth = new Array(months.length).fill(0);
+  for (const o of qualified) {
+    if (o.commissionFee == null || !o.paymentYmd) continue;
+    if (!inRange(o.paymentYmd, rangeStart, rangeEnd)) continue;
+    const i = monthPos[o.paymentYmd.slice(0, 7)];
+    if (i !== undefined) commByMonth[i] += o.commissionFee;
+  }
+
   const nowHour = toSeoulHour(new Date());
   let yesterdaySoFar = 0;
   for (const o of qualified) {
@@ -188,6 +208,7 @@ function buildDashboardFromOrders(qualified, ctx, serviceId, meta) {
       aov: commCount ? Math.round(quoteTotal / commCount) : 0,
       rate: quoteTotal ? commTotal / quoteTotal : null,
       byDay: commByDay,
+      months, byMonth: commByMonth,
     },
     todayItems: todayContract.map((o) => ({
       id: o.id, phone: o.phone, region: o.region, due_date: o.due_date, paymentAt: o.paymentAt,
