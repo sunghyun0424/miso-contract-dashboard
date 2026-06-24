@@ -241,9 +241,60 @@ function filterQualified(orders) {
   return orders.filter((o) => !EXCLUDED_STATUSES.includes(o.status));
 }
 
+const WEEKDAY_KO = ['일', '월', '화', '수', '목', '금', '토'];
+
+// 일/주/월 기간별 집계 — 접수=createdYmd, 계약·매출=paymentYmd 기준.
+// granularity: 'day' | 'week'(월요일 시작) | 'month'. 최근 count개 버킷을 최신순으로 반환.
+// rate(계약율) = 계약 ÷ 접수 (같은 기간 기준 — 기존 '기간 전환율'과 동일 정의).
+// revenue = commissionFee(우리 수수료) 합. rows[0] 은 진행 중(부분) 기간.
+function buildPeriodStats(qualified, granularity, todayYmd, count) {
+  const keyOf = (ymd) => {
+    if (!ymd) return null;
+    if (granularity === 'month') return ymd.slice(0, 7);
+    if (granularity === 'week') return shiftDate(ymd, -mondayIndex(ymd));
+    return ymd;
+  };
+  const lead = {}, contract = {}, rev = {};
+  for (const o of qualified) {
+    const lk = keyOf(o.createdYmd);
+    if (lk) lead[lk] = (lead[lk] || 0) + 1;
+    const ck = keyOf(o.paymentYmd);
+    if (ck) {
+      contract[ck] = (contract[ck] || 0) + 1;
+      if (o.commissionFee != null) rev[ck] = (rev[ck] || 0) + o.commissionFee;
+    }
+  }
+  const keys = [];
+  if (granularity === 'month') {
+    let [y, mo] = todayYmd.split('-').map(Number);
+    for (let i = 0; i < count; i++) { keys.push(y + '-' + String(mo).padStart(2, '0')); mo--; if (mo < 1) { mo = 12; y--; } }
+  } else if (granularity === 'week') {
+    let ws = shiftDate(todayYmd, -mondayIndex(todayYmd));
+    for (let i = 0; i < count; i++) { keys.push(ws); ws = shiftDate(ws, -7); }
+  } else {
+    let d = todayYmd;
+    for (let i = 0; i < count; i++) { keys.push(d); d = shiftDate(d, -1); }
+  }
+  const labelOf = (key) => {
+    if (granularity === 'month') return { label: key, sub: Number(key.slice(5, 7)) + '월' };
+    if (granularity === 'week') {
+      const end = shiftDate(key, 6);
+      return { label: key.slice(5).replace('-', '/') + '~' + end.slice(5).replace('-', '/'), sub: key.slice(0, 4) };
+    }
+    const dow = WEEKDAY_KO[new Date(key + 'T00:00:00Z').getUTCDay()];
+    return { label: key.slice(5).replace('-', '/'), sub: dow };
+  };
+  const rows = keys.map((key, i) => {
+    const lc = lead[key] || 0, cc = contract[key] || 0;
+    const lab = labelOf(key);
+    return { key, label: lab.label, sub: lab.sub, lead: lc, contract: cc, rate: lc ? cc / lc : null, revenue: rev[key] || 0, partial: i === 0 };
+  });
+  return { granularity, rows };
+}
+
 const api = {
   TIMEZONE, EXCLUDED_STATUSES,
-  resolveOpts, buildDashboardFromOrders, filterQualified,
+  resolveOpts, buildDashboardFromOrders, filterQualified, buildPeriodStats,
   toSeoulDate, todaySeoul, shiftDate, clampYmd, inRange, toSeoulHour,
 };
 
