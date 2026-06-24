@@ -133,7 +133,6 @@
   #cardPerf thead th { position: sticky; top: 0; background: var(--card); z-index: 1; }
   #cardPerf .sub { color: var(--muted); font-size: 11px; font-weight: 500; margin-left: 4px; }
   #cardPerf tbody tr.partial td:first-child { color: var(--indigo); font-weight: 600; }
-  #cardPerf tbody tr.total td { border-top: 2px solid var(--line); border-bottom: none; font-weight: 700; background: #fafbff; position: sticky; bottom: 0; }
   .pill { display:inline-block; padding:2px 9px; border-radius:999px; font-size:11px; font-weight:700; background:#e7f9ef; color:var(--green); }
   .legend { display: flex; gap: 16px; flex-wrap: wrap; margin-top: 12px; font-size: 12.5px; color: var(--muted); }
   .legend i { width: 10px; height: 10px; border-radius: 3px; display: inline-block; margin-right: 6px; vertical-align: middle; }
@@ -461,11 +460,11 @@
   </div>
 </div>
 
-<script src="metrics.js?v=20"></script>
+<script src="metrics.js?v=21"></script>
 <script type="module">
-  import { OrderStore, SyncState } from './idb-sync.js?v=20';
-  import { MisoClient } from './miso-api.js?v=20';
-  import { buildSheet, sortOrders } from './miso-sheets.js?v=20';
+  import { OrderStore, SyncState } from './idb-sync.js?v=21';
+  import { MisoClient } from './miso-api.js?v=21';
+  import { buildSheet, sortOrders } from './miso-sheets.js?v=21';
   window.misoMetrics = globalThis.MisoMetrics;
   window.misoSyncState = SyncState;
   window.misoSheets = { buildSheet, sortOrders };
@@ -954,25 +953,17 @@
     if (!rows.length) { body.innerHTML = '<tr><td colspan="5" class="empty">데이터 없음</td></tr>'; return; }
     const ratePct = (r) => (r === null ? '–' : (r * 100).toFixed(1) + '%');
     const money = (n) => (n ? manFmt(n) : '–');
-    let tl = 0, tc = 0, tr = 0;
-    let html = rows.map((r) => {
-      tl += r.lead; tc += r.contract; tr += r.revenue;
+    body.innerHTML = rows.map((r) => {
+      const sub = r.sub ? ' <span class="sub">' + r.sub + '</span>' : '';
       const tag = r.partial ? ' <span class="sub">진행중</span>' : '';
       return '<tr' + (r.partial ? ' class="partial"' : '') + '>'
-        + '<td>' + r.label + ' <span class="sub">' + r.sub + '</span>' + tag + '</td>'
+        + '<td>' + r.label + sub + tag + '</td>'
         + '<td class="rt">' + r.lead.toLocaleString() + '</td>'
         + '<td class="rt">' + r.contract.toLocaleString() + '</td>'
         + '<td class="rt">' + ratePct(r.rate) + '</td>'
         + '<td class="rt" title="' + r.revenue.toLocaleString() + '원">' + money(r.revenue) + '</td>'
         + '</tr>';
     }).join('');
-    const unit = perfGran === 'month' ? '개월' : perfGran === 'week' ? '주' : '일';
-    html += '<tr class="total"><td>합계 <span class="sub">' + rows.length + unit + '</span></td>'
-      + '<td class="rt">' + tl.toLocaleString() + '</td>'
-      + '<td class="rt">' + tc.toLocaleString() + '</td>'
-      + '<td class="rt">' + ratePct(tl ? tc / tl : null) + '</td>'
-      + '<td class="rt" title="' + tr.toLocaleString() + '원">' + money(tr) + '</td></tr>';
-    body.innerHTML = html;
   }
   function setPerfGran(g) {
     if (perfGran === g) return;
@@ -1354,6 +1345,6 @@
   window.addEventListener('idb-ready', startApp);
   if (window.getMisoClient) startApp();
 </script>
-<script src="/pwa-register.js?v=20"></script>
+<script src="/pwa-register.js?v=21"></script>
 </body>
 </html>

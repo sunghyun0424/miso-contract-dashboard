@@ -276,10 +276,10 @@ function buildPeriodStats(qualified, granularity, todayYmd, count) {
     for (let i = 0; i < count; i++) { keys.push(d); d = shiftDate(d, -1); }
   }
   const labelOf = (key) => {
-    if (granularity === 'month') return { label: key, sub: Number(key.slice(5, 7)) + '월' };
+    if (granularity === 'month') return { label: Number(key.slice(5, 7)) + '월', sub: '' };
     if (granularity === 'week') {
       const end = shiftDate(key, 6);
-      return { label: key.slice(5).replace('-', '/') + '~' + end.slice(5).replace('-', '/'), sub: key.slice(0, 4) };
+      return { label: key.slice(5).replace('-', '/') + ' ~ ' + end.slice(5).replace('-', '/'), sub: '' };
     }
     const dow = WEEKDAY_KO[new Date(key + 'T00:00:00Z').getUTCDay()];
     return { label: key.slice(5).replace('-', '/'), sub: dow };
