@@ -482,11 +482,11 @@
   </div>
 </div>
 
-<script src="metrics.js?v=24"></script>
+<script src="metrics.js?v=26"></script>
 <script type="module">
-  import { OrderStore, SyncState } from './idb-sync.js?v=24';
-  import { MisoClient } from './miso-api.js?v=24';
-  import { buildSheet, sortOrders } from './miso-sheets.js?v=24';
+  import { OrderStore, SyncState } from './idb-sync.js?v=26';
+  import { MisoClient } from './miso-api.js?v=26';
+  import { buildSheet, sortOrders } from './miso-sheets.js?v=26';
   window.misoMetrics = globalThis.MisoMetrics;
   window.misoSyncState = SyncState;
   window.misoSheets = { buildSheet, sortOrders };
@@ -1110,9 +1110,18 @@
     }
     const ctx = window.misoMetrics.resolveOpts(unionOpts());
     const minC = qualifiedOrders.reduce((m, o) => (o.createdYmd && o.createdYmd < m ? o.createdYmd : m), '9999-99-99');
-    if (ctx.fetchStart < minC) { load(false, { show: true }); return; }
+    if (minC > shiftYmd(ctx.fetchStart, 14)) { load(false, { show: true }); return; } // 과거가 캐시에 없으면 재조회
     renderAll();
     setStatus('live', '로컬 재집계 · ' + fmt((lastMeta && lastMeta.generatedAt) || new Date().toISOString()));
+  }
+
+  // 새로고침 시 다시 받을 최근 구간(일). 과거 자료는 메모리에 보존하고 이 구간만 갱신.
+  const REFRESH_SCAN_DAYS = 60;
+  function mergeOrdersInMemory(existing, incoming) {
+    const map = new Map();
+    for (const o of (existing || [])) map.set(o.id, o);
+    for (const o of (incoming || [])) map.set(o.id, o); // 최신(incoming) 우선 upsert
+    return [...map.values()];
   }
 
   async function load(force, options = {}) {
@@ -1143,11 +1152,19 @@
         client.token = null;
         if (window.getOrderStore) await window.getOrderStore(serviceEl.value).clear();
       }
-      const data = await client.syncDashboard(dashParams());
-      if (data.orders?.length && window.getOrderStore) {
-        await window.getOrderStore(serviceEl.value).mergeOrders(data.orders);
+      // 깊은 스캔(전체 기간) vs 얕은 스캔(최근만 + 메모리 병합) 결정
+      const haveData = !force && qualifiedOrders && qualifiedOrders.length;
+      const cachedMin = haveData ? qualifiedOrders.reduce((mn, o) => (o.createdYmd && o.createdYmd < mn ? o.createdYmd : mn), '9999-99-99') : '9999-99-99';
+      const unionCtx = window.misoMetrics.resolveOpts(unionOpts());
+      // 캐시 시작일이 필요한 조회 시작일(fetchStart, 모든 카드 요구 포함)보다 14일 넘게 늦으면 = 과거 비어있음 → 전체 재조회
+      const deep = !haveData || cachedMin > shiftYmd(unionCtx.fetchStart, 14);
+      const scanOpts = deep ? unionOpts() : { rangeStart: shiftYmd(TODAY, -REFRESH_SCAN_DAYS), rangeEnd: TODAY };
+      const data = await client.syncDashboard(scanOpts);
+      const fetched = client.lastQualified || data.orders || [];
+      if (fetched.length && window.getOrderStore) {
+        await window.getOrderStore(serviceEl.value).mergeOrders(fetched);
       }
-      qualifiedOrders = client.lastQualified || data.orders;
+      qualifiedOrders = deep ? fetched : mergeOrdersInMemory(qualifiedOrders, fetched);
       lastMeta = { generatedAt: data.generatedAt, excludedUnqualified: data.excludedUnqualified };
       renderAll();
       clearError();
@@ -1252,7 +1269,7 @@
   }
 
   const clearOn = (sel) => document.querySelectorAll(sel).forEach((b) => b.classList.remove('on'));
-  $('reloadBtn').onclick = () => load(false);
+  $('reloadBtn').onclick = () => load(false, { show: true });
   $('settingsBtn').onclick = () => toggleSettings();
   $('applyBtn').onclick = () => { load(false); toggleSettings(false); };
   $('forceBtn').onclick = () => load(true);
@@ -1487,6 +1504,6 @@
   window.addEventListener('idb-ready', startApp);
   if (window.getMisoClient) startApp();
 </script>
-<script src="/pwa-register.js?v=24"></script>
+<script src="/pwa-register.js?v=26"></script>
 </body>
 </html>
