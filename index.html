@@ -224,7 +224,6 @@
     <div class="topbar">
       <div>
         <h1>실시간 계약 대시보드</h1>
-        <div class="sub" id="subInfo">미소방문이사 (586) · 접수=생성일, 계약=결제 일시 기준</div>
       </div>
       <div class="actions">
         <div class="status"><span id="dot" class="dot"></span><span id="statusText">대기 중</span></div>
@@ -482,11 +481,11 @@
   </div>
 </div>
 
-<script src="metrics.js?v=26"></script>
+<script src="metrics.js?v=27"></script>
 <script type="module">
-  import { OrderStore, SyncState } from './idb-sync.js?v=26';
-  import { MisoClient } from './miso-api.js?v=26';
-  import { buildSheet, sortOrders } from './miso-sheets.js?v=26';
+  import { OrderStore, SyncState } from './idb-sync.js?v=27';
+  import { MisoClient } from './miso-api.js?v=27';
+  import { buildSheet, sortOrders } from './miso-sheets.js?v=27';
   window.misoMetrics = globalThis.MisoMetrics;
   window.misoSyncState = SyncState;
   window.misoSheets = { buildSheet, sortOrders };
@@ -1066,8 +1065,6 @@
     tEl.textContent = (met ? '▲ ' : '') + '달성 ' + m.todayContract + ' / ' + tgt + ' (' + ach + '%)';
     tEl.title = '어제 접수 ' + m.yesterdayLeadIn + ' × ' + Math.round(m.targetRatio * 100) + '% (올림)';
 
-    $('subInfo').textContent = '미소방문이사 (' + lastData.serviceId + ') · 접수=생성일, 계약=결제 일시 · unqualified 제외 · 스캔 ' + lastData.scanned + '건'
-      + (lastData.excludedUnqualified ? ' (제외 ' + lastData.excludedUnqualified + '건)' : '');
 
     buildTimetable(); buildDonut(); buildDays();
     renderTodayRows(lastData.todayItems);
@@ -1504,6 +1501,6 @@
   window.addEventListener('idb-ready', startApp);
   if (window.getMisoClient) startApp();
 </script>
-<script src="/pwa-register.js?v=26"></script>
+<script src="/pwa-register.js?v=27"></script>
 </body>
 </html>
