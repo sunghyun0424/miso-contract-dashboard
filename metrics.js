@@ -2,6 +2,8 @@
 
 const TIMEZONE = 'Asia/Seoul';
 const EXCLUDED_STATUSES = ['unqualified'];
+// 오늘 계약 타겟 = 전일 접수 × 이 비율 (올림). 정책 변경 시 여기만 수정.
+const TARGET_RATIO = 0.35;
 
 function toSeoulDate(input) {
   if (!input) return null;
@@ -193,6 +195,8 @@ function buildDashboardFromOrders(qualified, ctx, serviceId, meta) {
       yesterdaySoFar,
       yesterdayLeadIn: yesterdayLeads.length,
       yesterdayRate: rate(todayContract.length, yesterdayLeads.length),
+      todayTarget: Math.ceil(yesterdayLeads.length * TARGET_RATIO),
+      targetRatio: TARGET_RATIO,
       contract7d: contract7d.length,
       leadIn7d: leads7d.length,
       rate7d: rate(contract7d.length, leads7d.length),

@@ -80,7 +80,7 @@
   .card-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; margin-bottom: 14px; }
 
   /* KPI */
-  .kpis { display: grid; grid-template-columns: repeat(4, 1fr); gap: 18px; margin-bottom: 20px; }
+  .kpis { display: grid; grid-template-columns: repeat(5, 1fr); gap: 18px; margin-bottom: 20px; }
   .kpi { display: flex; align-items: center; gap: 16px; }
   .kpi .chip { width: 52px; height: 52px; border-radius: 14px; display: grid; place-items: center; flex-shrink: 0; }
   .kpi .chip svg { width: 24px; height: 24px; }
@@ -247,6 +247,14 @@
           <div class="num"><span id="m_yLead">–</span><span class="u">건</span></div>
           <div class="lbl">어제 접수 (Yesterday Lead-in)</div>
           <div class="delta flat" id="d_yLead">unqualified 제외</div>
+        </div>
+      </div>
+      <div class="card kpi drillable" data-sheet="todayContracts">
+        <div class="chip purple"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="6"/><circle cx="12" cy="12" r="2"/></svg></div>
+        <div>
+          <div class="num"><span id="m_target">–</span><span class="u">건</span></div>
+          <div class="lbl">오늘 타겟 (Today Target)</div>
+          <div class="delta flat" id="d_target">어제 접수 × 35%</div>
         </div>
       </div>
       <div class="card kpi drillable" data-sheet-tabs='[{"type":"todayContracts","label":"오늘 계약(분자)"},{"type":"yesterdayLeads","label":"어제 접수(분모)"}]'>
@@ -425,11 +433,11 @@
   </div>
 </div>
 
-<script src="metrics.js?v=18"></script>
+<script src="metrics.js?v=19"></script>
 <script type="module">
-  import { OrderStore, SyncState } from './idb-sync.js?v=18';
-  import { MisoClient } from './miso-api.js?v=18';
-  import { buildSheet, sortOrders } from './miso-sheets.js?v=18';
+  import { OrderStore, SyncState } from './idb-sync.js?v=19';
+  import { MisoClient } from './miso-api.js?v=19';
+  import { buildSheet, sortOrders } from './miso-sheets.js?v=19';
   window.misoMetrics = globalThis.MisoMetrics;
   window.misoSyncState = SyncState;
   window.misoSheets = { buildSheet, sortOrders };
@@ -915,6 +923,7 @@
 
     $('m_todayContract').textContent = m.todayContract;
     $('m_yLead').textContent = m.yesterdayLeadIn;
+    $('m_target').textContent = m.todayTarget;
     $('m_yRate').textContent = pct(m.yesterdayRate);
     $('m_r7').textContent = pct(m.rate7d);
 
@@ -925,6 +934,15 @@
     $('d_yLead').textContent = d.yesterday + ' 접수 · unqualified 제외';
     $('d_yRate').textContent = '오늘 계약 ' + m.todayContract + ' / 어제 접수 ' + m.yesterdayLeadIn;
     $('d_r7').textContent = '7일 계약 ' + m.contract7d + ' / 접수 ' + m.leadIn7d;
+
+    // 오늘 타겟 = 어제 접수 × targetRatio(올림) · 달성률 표시(달성 시 녹색)
+    const tgt = m.todayTarget;
+    const ach = tgt > 0 ? Math.round((m.todayContract / tgt) * 100) : 0;
+    const tEl = $('d_target');
+    const met = tgt > 0 && m.todayContract >= tgt;
+    tEl.className = 'delta ' + (met ? 'up' : 'flat');
+    tEl.textContent = (met ? '▲ ' : '') + '달성 ' + m.todayContract + ' / ' + tgt + ' (' + ach + '%)';
+    tEl.title = '어제 접수 ' + m.yesterdayLeadIn + ' × ' + Math.round(m.targetRatio * 100) + '% (올림)';
 
     $('subInfo').textContent = '미소방문이사 (' + lastData.serviceId + ') · 접수=생성일, 계약=결제 일시 · unqualified 제외 · 스캔 ' + lastData.scanned + '건'
       + (lastData.excludedUnqualified ? ' (제외 ' + lastData.excludedUnqualified + '건)' : '');
@@ -1260,6 +1278,6 @@
   window.addEventListener('idb-ready', startApp);
   if (window.getMisoClient) startApp();
 </script>
-<script src="/pwa-register.js?v=18"></script>
+<script src="/pwa-register.js?v=19"></script>
 </body>
 </html>
