@@ -135,6 +135,16 @@
   #cardPerf tbody tr.partial td:first-child { color: var(--indigo); font-weight: 600; }
   #cardPerf tbody tr.perfrow { cursor: pointer; }
   #cardPerf tbody tr.perfrow:hover td { background: #f7f8fc; }
+  /* 레이아웃 편집 모드 */
+  #layoutBtn.on { background: var(--indigo); color: #fff; border-color: var(--indigo); }
+  .drag-handle { display: none; position: absolute; top: -13px; left: 14px; z-index: 6; align-items: center; gap: 6px;
+    background: var(--indigo); color: #fff; font-size: 12px; font-weight: 700; padding: 4px 11px; border-radius: 999px; box-shadow: var(--shadow); cursor: grab; white-space: nowrap; }
+  .main.editing section[data-block] { position: relative; outline: 2px dashed var(--indigo); outline-offset: 6px; border-radius: 16px; cursor: grab; transition: opacity .12s; }
+  .main.editing section[data-block] > *:not(.drag-handle) { pointer-events: none; }
+  .main.editing section[data-block] .drag-handle { display: inline-flex; }
+  .main.editing section.dragging { opacity: .4; }
+  .main.editing section.drop-before { box-shadow: 0 -4px 0 -1px var(--indigo); }
+  .main.editing section.drop-after { box-shadow: 0 4px 0 -1px var(--indigo); }
   .pill { display:inline-block; padding:2px 9px; border-radius:999px; font-size:11px; font-weight:700; background:#e7f9ef; color:var(--green); }
   .legend { display: flex; gap: 16px; flex-wrap: wrap; margin-top: 12px; font-size: 12.5px; color: var(--muted); }
   .legend i { width: 10px; height: 10px; border-radius: 3px; display: inline-block; margin-right: 6px; vertical-align: middle; }
@@ -218,6 +228,8 @@
       </div>
       <div class="actions">
         <div class="status"><span id="dot" class="dot"></span><span id="statusText">대기 중</span></div>
+        <button class="btn ghost" id="layoutReset" style="display:none">기본 순서</button>
+        <button class="btn ghost" id="layoutBtn">레이아웃 편집</button>
         <button class="btn ghost" id="reloadBtn">새로고침</button>
         <button class="btn ghost" id="settingsBtn">설정</button>
       </div>
@@ -239,7 +251,7 @@
     <div id="err" class="err"></div>
 
     <!-- KPI -->
-    <section class="kpis">
+    <section class="kpis" data-block="kpis">
       <div class="card kpi drillable" data-sheet="todayContracts">
         <div class="chip green"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11"/></svg></div>
         <div>
@@ -283,7 +295,7 @@
     </section>
 
     <!-- 타임테이블 + 도넛 -->
-    <section class="grid-2">
+    <section class="grid-2" data-block="timeline">
       <div class="card drillable" id="cardTimetable" data-sheet-tabs='[{"type":"hourlySummary","label":"시간대 요약"},{"type":"timetableOrders","label":"기준일 상세","dayKey":"dayA"},{"type":"timetableOrders","label":"비교일 상세","dayKey":"dayB"}]'>
         <div class="card-head">
           <div>
@@ -317,7 +329,7 @@
     </section>
 
     <!-- 기간별 실적 (일·주·월) -->
-    <section>
+    <section data-block="perf">
       <div class="card" id="cardPerf">
         <div class="card-head">
           <div><h3>기간별 실적</h3><div class="cap">접수=생성일 · 계약·매출=계약일 기준 · 계약율=계약/접수 · 매출=우리 수수료 · 헤더 정렬 · 행 클릭 시 주문 상세</div></div>
@@ -347,7 +359,7 @@
     </section>
 
     <!-- 기간별 막대 + 오늘 계약 표 -->
-    <section class="grid-2">
+    <section class="grid-2" data-block="days">
       <div class="card drillable" id="cardDays" data-sheet-tabs='[{"type":"dailySummary","label":"일자 요약"},{"type":"rangeContracts","label":"기간 계약"},{"type":"rangeLeads","label":"기간 접수"}]'>
         <div class="card-head">
           <div><h3>기간별 계약 · 접수</h3><div class="cap" id="daysCap">일자별 계약/접수 건수</div></div>
@@ -380,7 +392,7 @@
     </section>
 
     <!-- 수수료(매출) 관리 -->
-    <section>
+    <section data-block="commission">
       <div class="card drillable" id="cardCommission" data-scope="comm" data-sheet-tabs='[{"type":"commissionByDay","label":"일자별 수수료"},{"type":"commissionOrders","label":"계약별 내역"}]'>
         <div class="card-head">
           <div><h3>수수료(매출) 관리</h3><div class="cap" id="commCap">선택 기간 · 계약일 기준 · 우리 수수료(commissionFee)</div></div>
@@ -403,7 +415,7 @@
     </section>
 
     <!-- 월별 매출 추이 -->
-    <section>
+    <section data-block="monthly">
       <div class="card drillable" id="cardMonthly" data-scope="month" data-sheet-tabs='[{"type":"commissionByDay","label":"일자별 수수료"},{"type":"commissionOrders","label":"계약별 내역"}]'>
         <div class="card-head">
           <div><h3>월별 누적 비교 (같은 시점)</h3><div class="cap" id="monthlyCap">각 달 1일부터 누적 매출 · 같은 일자에서 비교</div></div>
@@ -418,7 +430,7 @@
     </section>
 
     <!-- 플래너 정산 (월별 인건비) -->
-    <section>
+    <section data-block="payroll">
       <div class="card" id="cardPayroll">
         <div class="card-head">
           <div><h3>플래너 정산 (월별 인건비)</h3><div class="cap" id="payrollCap">월 선택 후 [계산] · 계약직 기본급+인센티브 / 프리랜서 방문비 / Ops 0</div></div>
@@ -470,11 +482,11 @@
   </div>
 </div>
 
-<script src="metrics.js?v=23"></script>
+<script src="metrics.js?v=24"></script>
 <script type="module">
-  import { OrderStore, SyncState } from './idb-sync.js?v=23';
-  import { MisoClient } from './miso-api.js?v=23';
-  import { buildSheet, sortOrders } from './miso-sheets.js?v=23';
+  import { OrderStore, SyncState } from './idb-sync.js?v=24';
+  import { MisoClient } from './miso-api.js?v=24';
+  import { buildSheet, sortOrders } from './miso-sheets.js?v=24';
   window.misoMetrics = globalThis.MisoMetrics;
   window.misoSyncState = SyncState;
   window.misoSheets = { buildSheet, sortOrders };
@@ -1253,6 +1265,75 @@
     const tr = e.target.closest('tr.perfrow');
     if (tr) openPeriodDetail(tr.dataset.start, tr.dataset.end, tr.dataset.label);
   };
+
+  // ---- 레이아웃 커스터마이즈 (드래그로 카드 순서 변경 → localStorage 저장) ----
+  const LAYOUT_KEY = 'miso_layout';
+  const BLOCK_NAMES = { kpis: 'KPI 카드', timeline: '시간대별 계약 비교', perf: '기간별 실적', days: '기간별 계약·접수', commission: '수수료(매출) 관리', monthly: '월별 누적 비교', payroll: '플래너 정산' };
+  const DEFAULT_ORDER = ['kpis', 'timeline', 'perf', 'days', 'commission', 'monthly', 'payroll'];
+  let editing = false, dragEl = null;
+  const layoutMain = () => document.querySelector('.main');
+  const sections = () => [...layoutMain().querySelectorAll(':scope > section[data-block]')];
+  function saveLayout() { localStorage.setItem(LAYOUT_KEY, JSON.stringify(sections().map((s) => s.dataset.block))); }
+  function applyLayout(order) {
+    const saved = order || JSON.parse(localStorage.getItem(LAYOUT_KEY) || 'null');
+    if (!Array.isArray(saved)) return;
+    const main = layoutMain(), map = {};
+    sections().forEach((s) => { map[s.dataset.block] = s; });
+    saved.forEach((id) => { if (map[id]) { main.appendChild(map[id]); delete map[id]; } });
+    Object.keys(map).forEach((id) => main.appendChild(map[id])); // 저장에 없던 새 블록은 맨 뒤로
+  }
+  function injectHandles() {
+    sections().forEach((s) => {
+      if (s.querySelector(':scope > .drag-handle')) return;
+      const h = document.createElement('div');
+      h.className = 'drag-handle';
+      h.innerHTML = '⠿ <span>' + (BLOCK_NAMES[s.dataset.block] || s.dataset.block) + '</span>';
+      s.insertBefore(h, s.firstChild);
+    });
+  }
+  const clearDropMarks = () => sections().forEach((s) => s.classList.remove('drop-before', 'drop-after'));
+  function initLayoutDnD() {
+    sections().forEach((sec) => {
+      sec.addEventListener('dragstart', (e) => {
+        if (!editing) return;
+        dragEl = sec; sec.classList.add('dragging');
+        e.dataTransfer.effectAllowed = 'move';
+        try { e.dataTransfer.setData('text/plain', sec.dataset.block); } catch (_) {}
+        const h = sec.querySelector('.drag-handle');
+        if (h && e.dataTransfer.setDragImage) e.dataTransfer.setDragImage(h, 12, 12);
+      });
+      sec.addEventListener('dragend', () => { sec.classList.remove('dragging'); dragEl = null; clearDropMarks(); saveLayout(); });
+      sec.addEventListener('dragover', (e) => {
+        if (!editing || !dragEl || sec === dragEl) return;
+        e.preventDefault();
+        const r = sec.getBoundingClientRect();
+        clearDropMarks();
+        sec.classList.add(e.clientY < r.top + r.height / 2 ? 'drop-before' : 'drop-after');
+      });
+      sec.addEventListener('drop', (e) => {
+        if (!editing || !dragEl || sec === dragEl) return;
+        e.preventDefault();
+        const r = sec.getBoundingClientRect();
+        const before = e.clientY < r.top + r.height / 2;
+        layoutMain().insertBefore(dragEl, before ? sec : sec.nextSibling);
+        clearDropMarks();
+      });
+    });
+  }
+  function setEditing(on) {
+    editing = on;
+    layoutMain().classList.toggle('editing', on);
+    sections().forEach((s) => { s.draggable = on; });
+    $('layoutBtn').textContent = on ? '편집 완료' : '레이아웃 편집';
+    $('layoutBtn').classList.toggle('on', on);
+    $('layoutReset').style.display = on ? '' : 'none';
+    if (!on) saveLayout();
+  }
+  $('layoutBtn').onclick = () => setEditing(!editing);
+  $('layoutReset').onclick = () => { localStorage.removeItem(LAYOUT_KEY); applyLayout(DEFAULT_ORDER); };
+  applyLayout();
+  injectHandles();
+  initLayoutDnD();
   $('dayA').onchange = onCardChange;
   $('dayB').onchange = onCardChange;
   $('ttToday').onclick = () => { $('dayA').value = TODAY; $('dayB').value = shiftYmd(TODAY,-1); onCardChange(); };
@@ -1406,6 +1487,6 @@
   window.addEventListener('idb-ready', startApp);
   if (window.getMisoClient) startApp();
 </script>
-<script src="/pwa-register.js?v=23"></script>
+<script src="/pwa-register.js?v=24"></script>
 </body>
 </html>
