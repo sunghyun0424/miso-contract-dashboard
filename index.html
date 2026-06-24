@@ -320,10 +320,18 @@
         <div class="card-head">
           <div><h3>기간별 실적</h3><div class="cap">접수=생성일 · 계약·매출=계약일 기준 · 계약율=계약/접수 · 매출=우리 수수료</div></div>
           <div class="toggle">
-            <button id="pf_day" class="on">일</button>
+            <button id="pf_day">일</button>
             <button id="pf_week">주</button>
-            <button id="pf_month">월</button>
+            <button id="pf_month" class="on">월</button>
           </div>
+        </div>
+        <div class="ctl" style="margin-bottom:12px">
+          <input type="date" id="perfStart" />
+          <span class="sep">~</span>
+          <input type="date" id="perfEnd" />
+          <button class="preset on" data-range="pall" data-scope="perf">25.10~</button>
+          <button class="preset" data-range="p6m" data-scope="perf">최근 6개월</button>
+          <button class="preset" data-range="pyear" data-scope="perf">올해</button>
         </div>
         <div class="perf-wrap">
           <table class="perf">
@@ -460,11 +468,11 @@
   </div>
 </div>
 
-<script src="metrics.js?v=21"></script>
+<script src="metrics.js?v=22"></script>
 <script type="module">
-  import { OrderStore, SyncState } from './idb-sync.js?v=21';
-  import { MisoClient } from './miso-api.js?v=21';
-  import { buildSheet, sortOrders } from './miso-sheets.js?v=21';
+  import { OrderStore, SyncState } from './idb-sync.js?v=22';
+  import { MisoClient } from './miso-api.js?v=22';
+  import { buildSheet, sortOrders } from './miso-sheets.js?v=22';
   window.misoMetrics = globalThis.MisoMetrics;
   window.misoSyncState = SyncState;
   window.misoSheets = { buildSheet, sortOrders };
@@ -503,7 +511,7 @@
   let chTime = null, chDonut = null, chDays = null, chCommission = null, chMonthly = null;
   // 대시보드별 독립 기간 — 단일 스캔(합집합) 후 카드마다 자기 기간으로 메모리 재집계
   let qualifiedOrders = null, lastMeta = null, commData = null, monthData = null, monthlyMonths = 1;
-  let perfGran = 'day';
+  let perfGran = 'month';
   let appStarted = false;
 
   const C = { indigo:'#6366f1', blue:'#3b82f6', green:'#22c55e', amber:'#f59e0b', grayBar:'#e5e9f2', muted:'#8a94ad' };
@@ -527,12 +535,9 @@
   function optsMain() { return { dayA: $('dayA').value, dayB: $('dayB').value, rangeStart: $('rangeStart').value, rangeEnd: $('rangeEnd').value }; }
   function optsComm() { return { rangeStart: $('commStart').value, rangeEnd: $('commEnd').value }; }
   function optsMonth() { return { rangeStart: monthsAgoFirst(monthlyMonths - 1), rangeEnd: TODAY }; }
-  function perfCount() { return perfGran === 'month' ? 6 : perfGran === 'week' ? 8 : 14; }
-  // 기간별 실적 카드가 필요로 하는 스캔 범위 (선택 단위에 따라 가변)
+  // 기간별 실적 카드의 선택 기간 (일/주/월 토글과 무관, 날짜 범위로 집계)
   function optsPerf() {
-    if (perfGran === 'month') return { rangeStart: monthsAgoFirst(5), rangeEnd: TODAY };
-    if (perfGran === 'week') return { rangeStart: shiftYmd(TODAY, -7 * 8), rangeEnd: TODAY };
-    return { rangeStart: shiftYmd(TODAY, -14), rangeEnd: TODAY };
+    return { rangeStart: $('perfStart').value || DATA_START, rangeEnd: $('perfEnd').value || TODAY };
   }
   function ymdMin(...a) { return a.filter((x) => /^\d{4}-\d{2}-\d{2}$/.test(x || '')).reduce((p, c) => (c < p ? c : p)); }
   function ymdMax(...a) { return a.filter((x) => /^\d{4}-\d{2}-\d{2}$/.test(x || '')).reduce((p, c) => (c > p ? c : p)); }
@@ -949,7 +954,8 @@
     const body = $('perfBody');
     if (!qualifiedOrders || !qualifiedOrders.length) { body.innerHTML = '<tr><td colspan="5" class="empty">데이터를 불러오세요.</td></tr>'; return; }
     const q = window.misoMetrics.filterQualified(qualifiedOrders);
-    const { rows } = window.misoMetrics.buildPeriodStats(q, perfGran, TODAY, perfCount());
+    const o = optsPerf();
+    const { rows } = window.misoMetrics.buildPeriodStats(q, perfGran, o.rangeStart, o.rangeEnd, TODAY);
     if (!rows.length) { body.innerHTML = '<tr><td colspan="5" class="empty">데이터 없음</td></tr>'; return; }
     const ratePct = (r) => (r === null ? '–' : (r * 100).toFixed(1) + '%');
     const money = (n) => (n ? manFmt(n) : '–');
@@ -1157,12 +1163,15 @@
 
   // 기간 컨트롤 초기값
   const TODAY = seoulYmd();
+  const DATA_START = '2025-10-01';                    // 조회 가능한 자료 시작일
   $('dayA').value = TODAY;
   $('dayB').value = shiftYmd(TODAY, -1);
   $('rangeStart').value = shiftYmd(TODAY, -6);
   $('rangeEnd').value = TODAY;
   $('commStart').value = TODAY.slice(0, 8) + '01';   // 수수료 기본: 이번 달
   $('commEnd').value = TODAY;
+  $('perfStart').value = DATA_START;                  // 기간별 실적 기본: 25.10 ~ 오늘
+  $('perfEnd').value = TODAY;
 
   function applyRangePreset(kind, scope) {
     if (scope === 'comm') {
@@ -1173,6 +1182,11 @@
       $('commStart').value = s; $('commEnd').value = TODAY;
     } else if (scope === 'month') {
       monthlyMonths = kind === '12m' ? 12 : kind === '24m' ? 24 : 6;
+    } else if (scope === 'perf') {
+      let s = DATA_START;
+      if (kind === 'p6m') s = monthsAgoFirst(5);
+      else if (kind === 'pyear') s = TODAY.slice(0, 4) + '-01-01';
+      $('perfStart').value = s; $('perfEnd').value = TODAY;
     } else {
       let s = TODAY;
       if (kind === '7') s = shiftYmd(TODAY, -6);
@@ -1201,6 +1215,8 @@
   $('rangeEnd').onchange = () => { clearOn('#cardDays .preset[data-range]'); onCardChange(); };
   $('commStart').onchange = () => { clearOn('#cardCommission .preset[data-range]'); onCardChange(); };
   $('commEnd').onchange = () => { clearOn('#cardCommission .preset[data-range]'); onCardChange(); };
+  $('perfStart').onchange = () => { clearOn('#cardPerf .preset[data-range]'); onCardChange(); };
+  $('perfEnd').onchange = () => { clearOn('#cardPerf .preset[data-range]'); onCardChange(); };
   document.querySelectorAll('.preset[data-range]').forEach((b) => b.onclick = () => {
     [...b.parentElement.querySelectorAll('.preset[data-range]')].forEach((x) => x.classList.toggle('on', x === b));
     applyRangePreset(b.dataset.range, b.dataset.scope);
@@ -1345,6 +1361,6 @@
   window.addEventListener('idb-ready', startApp);
   if (window.getMisoClient) startApp();
 </script>
-<script src="/pwa-register.js?v=21"></script>
+<script src="/pwa-register.js?v=22"></script>
 </body>
 </html>

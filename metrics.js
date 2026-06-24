@@ -244,10 +244,11 @@ function filterQualified(orders) {
 const WEEKDAY_KO = ['일', '월', '화', '수', '목', '금', '토'];
 
 // 일/주/월 기간별 집계 — 접수=createdYmd, 계약·매출=paymentYmd 기준.
-// granularity: 'day' | 'week'(월요일 시작) | 'month'. 최근 count개 버킷을 최신순으로 반환.
+// granularity: 'day' | 'week'(월요일 시작) | 'month'. [startYmd, endYmd] 구간을 최신순 버킷으로 반환.
 // rate(계약율) = 계약 ÷ 접수 (같은 기간 기준 — 기존 '기간 전환율'과 동일 정의).
-// revenue = commissionFee(우리 수수료) 합. rows[0] 은 진행 중(부분) 기간.
-function buildPeriodStats(qualified, granularity, todayYmd, count) {
+// revenue = commissionFee(우리 수수료) 합. todayYmd 가 포함된 버킷은 진행 중(partial).
+function buildPeriodStats(qualified, granularity, startYmd, endYmd, todayYmd) {
+  if (startYmd > endYmd) { const t = startYmd; startYmd = endYmd; endYmd = t; }
   const keyOf = (ymd) => {
     if (!ymd) return null;
     if (granularity === 'month') return ymd.slice(0, 7);
@@ -264,16 +265,22 @@ function buildPeriodStats(qualified, granularity, todayYmd, count) {
       if (o.commissionFee != null) rev[ck] = (rev[ck] || 0) + o.commissionFee;
     }
   }
+  // [start, end] 를 덮는 버킷 키 — 최신순(end → start)
   const keys = [];
   if (granularity === 'month') {
-    let [y, mo] = todayYmd.split('-').map(Number);
-    for (let i = 0; i < count; i++) { keys.push(y + '-' + String(mo).padStart(2, '0')); mo--; if (mo < 1) { mo = 12; y--; } }
+    let cur = endYmd.slice(0, 7); const startKey = startYmd.slice(0, 7);
+    for (let g = 0; cur >= startKey && g < 600; g++) {
+      keys.push(cur);
+      let [y, mo] = cur.split('-').map(Number); mo--; if (mo < 1) { mo = 12; y--; }
+      cur = y + '-' + String(mo).padStart(2, '0');
+    }
   } else if (granularity === 'week') {
-    let ws = shiftDate(todayYmd, -mondayIndex(todayYmd));
-    for (let i = 0; i < count; i++) { keys.push(ws); ws = shiftDate(ws, -7); }
+    let cur = shiftDate(endYmd, -mondayIndex(endYmd));
+    const startWk = shiftDate(startYmd, -mondayIndex(startYmd));
+    for (let g = 0; cur >= startWk && g < 4000; g++) { keys.push(cur); cur = shiftDate(cur, -7); }
   } else {
-    let d = todayYmd;
-    for (let i = 0; i < count; i++) { keys.push(d); d = shiftDate(d, -1); }
+    let cur = endYmd;
+    for (let g = 0; cur >= startYmd && g < 4000; g++) { keys.push(cur); cur = shiftDate(cur, -1); }
   }
   const labelOf = (key) => {
     if (granularity === 'month') return { label: Number(key.slice(5, 7)) + '월', sub: '' };
@@ -284,10 +291,18 @@ function buildPeriodStats(qualified, granularity, todayYmd, count) {
     const dow = WEEKDAY_KO[new Date(key + 'T00:00:00Z').getUTCDay()];
     return { label: key.slice(5).replace('-', '/'), sub: dow };
   };
+  const isToday = (key) => {
+    if (!todayYmd) return false;
+    if (granularity === 'month') return key === todayYmd.slice(0, 7);
+    if (granularity === 'week') return todayYmd >= key && todayYmd <= shiftDate(key, 6);
+    return key === todayYmd;
+  };
   const rows = keys.map((key, i) => {
     const lc = lead[key] || 0, cc = contract[key] || 0;
     const lab = labelOf(key);
-    return { key, label: lab.label, sub: lab.sub, lead: lc, contract: cc, rate: lc ? cc / lc : null, revenue: rev[key] || 0, partial: i === 0 };
+    let sub = lab.sub;
+    if (granularity === 'month' && (i === 0 || keys[i - 1].slice(0, 4) !== key.slice(0, 4))) sub = key.slice(0, 4); // 연도 경계 표기
+    return { key, label: lab.label, sub, lead: lc, contract: cc, rate: lc ? cc / lc : null, revenue: rev[key] || 0, partial: isToday(key) };
   });
   return { granularity, rows };
 }
