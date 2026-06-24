@@ -3,7 +3,8 @@
 // 플래너 월별 정산(인건비) 설정 — 필요 시 여기만 수정하면 됩니다.
 export const PAYROLL_CONFIG = {
   baseSalary: 2330000,   // 계약직 기본급(월)
-  visitFee: 18000,       // 프리랜서 방문 1건당
+  visitFee: 18000,       // 프리랜서 정상 방문 1건당
+  noshowFee: 9000,       // 프리랜서 노쇼("(방문 중)") 1건당
   cm: 52000,             // 인센티브 기여이익
   // 계약직 partner_id → 이름 (기본급 + 계약율 인센티브, 방문비 없음)
   contractPlanners: {
@@ -89,27 +90,28 @@ export function buildPayroll(rawOrders, partnerMap, month, todayYmd) {
     const fullName = info.name || C.contractPlanners[pid] || String(pid);
     if (/테스트|test/i.test(fullName)) continue;
     const name = shortName(fullName) || String(pid);
+    const noshow = a.vf - a.vq;                              // "(방문 중)" = 노쇼
     let grp = '프리랜서', base = 0, inc = 0, fee = 0;
     if (C.opsNames.includes(name)) {
       grp = 'Ops';                                           // 0원
     } else if (isContract) {
       grp = '계약직';
       base = C.baseSalary;
-      const rate = a.vq ? (a.c / a.vq) * 100 : 0;            // 상담가능 방문 기준 계약율
+      const rate = a.vq ? (a.c / a.vq) * 100 : 0;            // 정상(상담) 방문 기준 계약율
       inc = Math.round(a.c * C.cm * incentiveRate(rate));
     } else {
       grp = '프리랜서';
-      fee = a.vf * C.visitFee;
+      fee = a.vq * C.visitFee + noshow * C.noshowFee;        // 정상 18,000 + 노쇼 9,000
     }
-    rows.push({ pid: Number(pid), name, grp, visits: a.vf, contracts: a.c, proc: a.proc, rate: a.vf ? Math.round((a.c / a.vf) * 1000) / 10 : 0, base, inc, fee, total: base + inc + fee, orders: a.orders });
+    rows.push({ pid: Number(pid), name, grp, visits: a.vq, noshow, contracts: a.c, proc: a.proc, rate: a.vq ? Math.round((a.c / a.vq) * 1000) / 10 : 0, base, inc, fee, total: base + inc + fee, orders: a.orders });
   }
 
   const rank = { '계약직': 0, '프리랜서': 1, 'Ops': 2 };
   rows.sort((x, y) => (rank[x.grp] - rank[y.grp]) || (y.total - x.total) || (y.visits - x.visits));
   const totals = rows.reduce((t, r) => ({
-    visits: t.visits + r.visits, contracts: t.contracts + r.contracts,
+    visits: t.visits + r.visits, noshow: t.noshow + r.noshow, contracts: t.contracts + r.contracts, proc: t.proc + r.proc,
     base: t.base + r.base, inc: t.inc + r.inc, fee: t.fee + r.fee, total: t.total + r.total,
-  }), { visits: 0, contracts: 0, base: 0, inc: 0, fee: 0, total: 0 });
+  }), { visits: 0, noshow: 0, contracts: 0, proc: 0, base: 0, inc: 0, fee: 0, total: 0 });
 
   return { month, rows, totals };
 }
