@@ -297,12 +297,23 @@ function buildPeriodStats(qualified, granularity, startYmd, endYmd, todayYmd) {
     if (granularity === 'week') return todayYmd >= key && todayYmd <= shiftDate(key, 6);
     return key === todayYmd;
   };
-  const rows = keys.map((key, i) => {
+  // 월 뷰가 여러 해에 걸치면 모든 행에 연도 표기(정렬해도 안 헷갈리게), 한 해면 생략
+  const multiYear = keys.length > 0 && keys[0].slice(0, 4) !== keys[keys.length - 1].slice(0, 4);
+  const rangeOf = (key) => {
+    if (granularity === 'month') {
+      const [y, mo] = key.split('-').map(Number);
+      const last = new Date(Date.UTC(y, mo, 0)).getUTCDate();
+      return { start: key + '-01', end: key + '-' + String(last).padStart(2, '0') };
+    }
+    if (granularity === 'week') return { start: key, end: shiftDate(key, 6) };
+    return { start: key, end: key };
+  };
+  const rows = keys.map((key) => {
     const lc = lead[key] || 0, cc = contract[key] || 0;
     const lab = labelOf(key);
-    let sub = lab.sub;
-    if (granularity === 'month' && (i === 0 || keys[i - 1].slice(0, 4) !== key.slice(0, 4))) sub = key.slice(0, 4); // 연도 경계 표기
-    return { key, label: lab.label, sub, lead: lc, contract: cc, rate: lc ? cc / lc : null, revenue: rev[key] || 0, partial: isToday(key) };
+    const sub = granularity === 'month' ? (multiYear ? key.slice(0, 4) : '') : lab.sub;
+    const rg = rangeOf(key);
+    return { key, label: lab.label, sub, start: rg.start, end: rg.end, lead: lc, contract: cc, rate: lc ? cc / lc : null, revenue: rev[key] || 0, partial: isToday(key) };
   });
   return { granularity, rows };
 }

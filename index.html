@@ -133,6 +133,8 @@
   #cardPerf thead th { position: sticky; top: 0; background: var(--card); z-index: 1; }
   #cardPerf .sub { color: var(--muted); font-size: 11px; font-weight: 500; margin-left: 4px; }
   #cardPerf tbody tr.partial td:first-child { color: var(--indigo); font-weight: 600; }
+  #cardPerf tbody tr.perfrow { cursor: pointer; }
+  #cardPerf tbody tr.perfrow:hover td { background: #f7f8fc; }
   .pill { display:inline-block; padding:2px 9px; border-radius:999px; font-size:11px; font-weight:700; background:#e7f9ef; color:var(--green); }
   .legend { display: flex; gap: 16px; flex-wrap: wrap; margin-top: 12px; font-size: 12.5px; color: var(--muted); }
   .legend i { width: 10px; height: 10px; border-radius: 3px; display: inline-block; margin-right: 6px; vertical-align: middle; }
@@ -318,7 +320,7 @@
     <section>
       <div class="card" id="cardPerf">
         <div class="card-head">
-          <div><h3>기간별 실적</h3><div class="cap">접수=생성일 · 계약·매출=계약일 기준 · 계약율=계약/접수 · 매출=우리 수수료</div></div>
+          <div><h3>기간별 실적</h3><div class="cap">접수=생성일 · 계약·매출=계약일 기준 · 계약율=계약/접수 · 매출=우리 수수료 · 헤더 정렬 · 행 클릭 시 주문 상세</div></div>
           <div class="toggle">
             <button id="pf_day">일</button>
             <button id="pf_week">주</button>
@@ -335,7 +337,7 @@
         </div>
         <div class="perf-wrap">
           <table class="perf">
-            <thead><tr>
+            <thead id="perfHead"><tr>
               <th>기간</th><th class="rt">접수</th><th class="rt">계약</th><th class="rt">계약율</th><th class="rt">매출</th>
             </tr></thead>
             <tbody id="perfBody"><tr><td colspan="5" class="empty">데이터를 불러오세요.</td></tr></tbody>
@@ -468,11 +470,11 @@
   </div>
 </div>
 
-<script src="metrics.js?v=22"></script>
+<script src="metrics.js?v=23"></script>
 <script type="module">
-  import { OrderStore, SyncState } from './idb-sync.js?v=22';
-  import { MisoClient } from './miso-api.js?v=22';
-  import { buildSheet, sortOrders } from './miso-sheets.js?v=22';
+  import { OrderStore, SyncState } from './idb-sync.js?v=23';
+  import { MisoClient } from './miso-api.js?v=23';
+  import { buildSheet, sortOrders } from './miso-sheets.js?v=23';
   window.misoMetrics = globalThis.MisoMetrics;
   window.misoSyncState = SyncState;
   window.misoSheets = { buildSheet, sortOrders };
@@ -950,19 +952,45 @@
   }
 
   // ---- 기간별 실적 (일·주·월) ----
+  const PERF_COLS = [
+    { k: 'key', l: '기간', rt: false }, { k: 'lead', l: '접수', rt: true }, { k: 'contract', l: '계약', rt: true },
+    { k: 'rate', l: '계약율', rt: true }, { k: 'revenue', l: '매출', rt: true },
+  ];
+  let perfSort = { key: 'key', dir: 'desc' };   // 기본: 기간 내림차순(최신 위)
   function renderPerf() {
     const body = $('perfBody');
+    // 정렬 헤더 (데이터 유무와 무관하게 그려 클릭 가능)
+    $('perfHead').innerHTML = '<tr>' + PERF_COLS.map((c) =>
+      '<th data-pk="' + c.k + '"' + (c.rt ? ' class="rt"' : '') + ' style="cursor:pointer;white-space:nowrap">' + c.l +
+      (perfSort.key === c.k ? (perfSort.dir === 'asc' ? ' ▲' : ' ▼') : '') + '</th>'
+    ).join('') + '</tr>';
+    $('perfHead').querySelectorAll('th').forEach((th) => {
+      th.onclick = () => {
+        const k = th.dataset.pk;
+        if (perfSort.key === k) perfSort.dir = perfSort.dir === 'asc' ? 'desc' : 'asc';
+        else { perfSort.key = k; perfSort.dir = 'desc'; }
+        renderPerf();
+      };
+    });
     if (!qualifiedOrders || !qualifiedOrders.length) { body.innerHTML = '<tr><td colspan="5" class="empty">데이터를 불러오세요.</td></tr>'; return; }
     const q = window.misoMetrics.filterQualified(qualifiedOrders);
     const o = optsPerf();
-    const { rows } = window.misoMetrics.buildPeriodStats(q, perfGran, o.rangeStart, o.rangeEnd, TODAY);
-    if (!rows.length) { body.innerHTML = '<tr><td colspan="5" class="empty">데이터 없음</td></tr>'; return; }
+    const base = window.misoMetrics.buildPeriodStats(q, perfGran, o.rangeStart, o.rangeEnd, TODAY).rows;
+    if (!base.length) { body.innerHTML = '<tr><td colspan="5" class="empty">데이터 없음</td></tr>'; return; }
+    const rows = base.slice();
+    const k = perfSort.key, mul = perfSort.dir === 'desc' ? -1 : 1;
+    rows.sort((a, b) => {
+      let av = a[k], bv = b[k];
+      if (k === 'rate') { av = av == null ? -1 : av; bv = bv == null ? -1 : bv; }
+      if (typeof av === 'number' && typeof bv === 'number') return (av - bv) * mul;
+      return String(av).localeCompare(String(bv)) * mul;
+    });
     const ratePct = (r) => (r === null ? '–' : (r * 100).toFixed(1) + '%');
     const money = (n) => (n ? manFmt(n) : '–');
     body.innerHTML = rows.map((r) => {
       const sub = r.sub ? ' <span class="sub">' + r.sub + '</span>' : '';
       const tag = r.partial ? ' <span class="sub">진행중</span>' : '';
-      return '<tr' + (r.partial ? ' class="partial"' : '') + '>'
+      return '<tr class="perfrow' + (r.partial ? ' partial' : '') + '" data-start="' + r.start + '" data-end="' + r.end + '" data-label="' + r.label + '">'
         + '<td>' + r.label + sub + tag + '</td>'
         + '<td class="rt">' + r.lead.toLocaleString() + '</td>'
         + '<td class="rt">' + r.contract.toLocaleString() + '</td>'
@@ -970,6 +998,19 @@
         + '<td class="rt" title="' + r.revenue.toLocaleString() + '원">' + money(r.revenue) + '</td>'
         + '</tr>';
     }).join('');
+  }
+  // 기간 행 클릭 → 해당 구간 주문(계약/접수/수수료) 시트
+  function openPeriodDetail(start, end, label) {
+    openSheet({
+      type: 'rangeContracts',
+      tabs: [
+        { type: 'rangeContracts', label: '계약' },
+        { type: 'rangeLeads', label: '접수' },
+        { type: 'commissionOrders', label: '수수료 내역' },
+      ],
+      tabIndex: 0,
+      opts: { rangeStart: start, rangeEnd: end },
+    });
   }
   function setPerfGran(g) {
     if (perfGran === g) return;
@@ -1208,6 +1249,10 @@
   $('pf_day').onclick = () => setPerfGran('day');
   $('pf_week').onclick = () => setPerfGran('week');
   $('pf_month').onclick = () => setPerfGran('month');
+  $('perfBody').onclick = (e) => {
+    const tr = e.target.closest('tr.perfrow');
+    if (tr) openPeriodDetail(tr.dataset.start, tr.dataset.end, tr.dataset.label);
+  };
   $('dayA').onchange = onCardChange;
   $('dayB').onchange = onCardChange;
   $('ttToday').onclick = () => { $('dayA').value = TODAY; $('dayB').value = shiftYmd(TODAY,-1); onCardChange(); };
@@ -1361,6 +1406,6 @@
   window.addEventListener('idb-ready', startApp);
   if (window.getMisoClient) startApp();
 </script>
-<script src="/pwa-register.js?v=22"></script>
+<script src="/pwa-register.js?v=23"></script>
 </body>
 </html>
